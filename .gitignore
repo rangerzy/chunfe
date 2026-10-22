@@ -1,0 +1,13 @@
+/build/
+/dist/
+/.flatpak-builder/
+/flatpak-build/
+/flatpak-repo/
+/CMakeUserPresets.json
+/.qtcreator/
+/.idea/
+/.vscode/
+.DS_Store
+__pycache__/
+*.pyc
+*.user

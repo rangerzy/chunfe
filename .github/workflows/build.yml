@@ -1,0 +1,178 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: "6.12.0"
+
+jobs:
+  macos:
+    name: macOS arm64 DMG
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.4.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          # Qt's clang_64 package contains both Intel and Apple Silicon slices.
+          arch: clang_64
+          cache: true
+      - name: Record and verify toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
+          xcodebuild -version
+          xcrun clang++ --version
+          cmake --version
+          ninja --version
+      - name: Configure and build
+        run: |
+          cmake --preset macos-arm64-release \
+            -DCMAKE_CXX_COMPILER="$(xcrun --find clang++)" \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+          cmake --build --preset macos-arm64-release --parallel 3
+      - name: Deploy Qt, build DMG and verify installed files
+        run: bash packaging/macos/package.sh
+      - name: Upload verified DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: chunfe-macos-arm64-package
+          path: dist/chunfe-*-macos-arm64.dmg
+          if-no-files-found: error
+          compression-level: 0
+
+  windows:
+    name: Windows x64 installer
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Qt and its matching MinGW toolchain
+        uses: jurplel/install-qt-action@v4.4.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_mingw
+          # aqt 3.3.0 cannot resolve the Windows Qt 6.11+ repository layout.
+          # Pin the upstream fix until it is included in a stable aqt release.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@7e5a5c3d95cf962cfc2f36c86ffa0d2c07f1a0d4
+          # The published Qt 6.12.0 MinGW SDK declares this compiler dependency.
+          tools: tools_mingw1310,qt.tools.win64_mingw1310
+          cache: true
+      - name: Select and verify the Qt MinGW toolchain
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $qtInstall = Split-Path (Split-Path $env:QT_ROOT_DIR -Parent) -Parent
+          $mingwBin = Join-Path $qtInstall "Tools/mingw1310_64/bin"
+          $compiler = Join-Path $mingwBin "g++.exe"
+          if (-not (Test-Path -LiteralPath $compiler)) {
+            throw "Qt's matching MinGW compiler is missing: $compiler"
+          }
+          if ((& $compiler -dumpfullversion).Trim() -ne "13.1.0") {
+            throw "Unexpected MinGW compiler version"
+          }
+          if ((& $compiler -dumpmachine).Trim() -ne "x86_64-w64-mingw32") {
+            throw "The compiler must target Windows x64"
+          }
+          if ((qmake -query QT_VERSION).Trim() -ne $env:QT_VERSION) {
+            throw "Unexpected Qt version"
+          }
+          "CHUNFE_MINGW_BIN=$mingwBin" >> $env:GITHUB_ENV
+          $mingwBin >> $env:GITHUB_PATH
+          & $compiler --version
+          cmake --version
+          ninja --version
+      - name: Configure and build
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --preset windows-x64-release "-DCMAKE_CXX_COMPILER=$env:CHUNFE_MINGW_BIN/g++.exe" "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
+          cmake --build --preset windows-x64-release --parallel 3
+      - name: Deploy Qt, build installer and verify installed files
+        run: ./scripts/ci/package-windows.ps1
+      - name: Upload verified installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: chunfe-windows-x64-package
+          path: dist/chunfe-*-windows-x64-setup.exe
+          if-no-files-found: error
+          compression-level: 0
+
+  linux:
+    name: Linux x64 Flatpak
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test release publishing logic
+        run: python3 -B -m unittest discover -s tests -p test_publish_release.py
+      - name: Install Flatpak build and validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            flatpak flatpak-builder desktop-file-utils \
+            python3 coreutils elfutils librsvg2-common
+      - name: Build Flatpak and verify installed files
+        run: bash scripts/ci/build-flatpak.sh
+      - name: Upload verified Flatpak
+        uses: actions/upload-artifact@v7
+        with:
+          name: chunfe-linux-x64-package
+          path: dist/chunfe-*-linux-x64.flatpak
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Publish GitHub Release
+    needs: [macos, windows, linux]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: chunfe-release-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Collect the three verified installers
+        uses: actions/download-artifact@v8
+        with:
+          pattern: chunfe-*-package
+          merge-multiple: true
+          path: release-assets
+      - name: Publish the installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/publish_release.py release-assets

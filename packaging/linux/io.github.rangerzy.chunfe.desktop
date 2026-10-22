@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=春风
+Name[en]=Chunfe
+Comment=遇事不决，可问春风；面试辅助工具
+Exec=Chunfe
+Icon=io.github.rangerzy.chunfe
+Terminal=false
+Categories=Utility;
+StartupNotify=true
