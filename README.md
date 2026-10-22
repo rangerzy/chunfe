@@ -2,6 +2,8 @@
 
 **遇事不决，可问春风。**
 
+[GitHub 仓库](https://github.com/rangerzy/chunfe) · [构建与发布](https://github.com/rangerzy/chunfe/actions/workflows/build.yml) · [下载安装包](https://github.com/rangerzy/chunfe/releases)
+
 春风是一个基于 **Qt Quick** 的桌面端 AI 面试辅助工具项目，帮助面试者理解面试官的问题、组织回答思路，并获得参考回答。
 
 ## 当前阶段
@@ -112,7 +114,7 @@ git switch dev
 - 也可在 GitHub Actions 中选择 `main` 手动运行；选择其他分支时所有任务跳过。
 - 工作流默认只有 `contents: read`，仅 Release 任务使用 `contents: write`，通过内置 `github.token` 发布，无需额外发布 Secret。
 
-连接 GitHub 远端并将这些配置推送到 `main` 后，自动化流程才会在 GitHub 上运行。
+GitHub 远端为 `https://github.com/rangerzy/chunfe.git`，默认分支为 `main`。本地 `main`、`dev` 分别跟踪 `origin/main`、`origin/dev`。
 
 版本唯一来源为 `CMakeLists.txt` 的 `project(Chunfe VERSION ...)`。Release 标签为 `v<版本>`，标题为 `Chunfe <版本>`。
 
