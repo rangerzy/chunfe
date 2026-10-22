@@ -2,19 +2,86 @@
 
 **遇事不决，可问春风。**
 
-[GitHub 仓库](https://github.com/rangerzy/chunfe) · [构建与发布](https://github.com/rangerzy/chunfe/actions/workflows/build.yml) · [下载安装包](https://github.com/rangerzy/chunfe/releases)
+[GitHub 仓库](https://github.com/rangerzy/chunfe) · [构建与发布](https://github.com/rangerzy/chunfe/actions/workflows/build.yml) · [历史发布](https://github.com/rangerzy/chunfe/releases)
 
 春风是一个基于 **Qt Quick** 的桌面端 AI 面试辅助工具项目，帮助面试者理解面试官的问题、组织回答思路，并获得参考回答。
 
 ## 当前阶段
 
-当前版本：`0.1.0`。项目目前只有 Qt Quick 界面骨架，面试问题识别、AI 回答建议与面试上下文处理均尚未实现。
+当前版本：`0.1.0`。当前可运行的是 [`examples/text_block_lab`](examples/text_block_lab) 中的 **TextBlock 文本气泡实验室**：用于观察只读单段落气泡的自然宽度、换行、粗体与高亮、混合文字、流式更新和多个独立实例。所有内容均为本地静态样本；面试问题识别、AI 回答建议与面试上下文处理尚未实现。
 
-本次初始化参考 `jian` 项目的构建、打包和发布配置，保留已有 C++ / QML 代码。后续开发围绕面试问题理解、回答建议和表达辅助展开。
+仓库根目录保留给后续正式项目入口，目前没有根级 `main.cpp` 或 `Chunfe` 可执行目标。根工程默认构建实验室 `text_block_lab`（QML URI 为 `TextBlockLab`）、共享 TextBlock 模块和字体资源；传入 `-DTEXT_BLOCK_BUILD_LAB=OFF` 可关闭实验室。正式应用安装包和自动发布暂时停用。
+
+实验页面提供宽度调节、流式开始／暂停／重置、复制，以及 6／30／100 个实例切换。静态对照的 TextBlock 与原生 Qt Quick `Text` 使用相同纯文本、基础字体、有效最大宽度、背景色、圆角和内边距；原生 Text 显式使用 `QtRendering`。布局活动观察与性能测量分开运行。
+
+### 应用字体
+
+中文使用 **OPPO Sans 4.0**，英文和 ASCII 数字使用 **JetBrains Mono 2.304**。正文使用 Regular（400），保留标题半粗体（600）和重点加粗（700）；Emoji 沿用平台字体回退。
+
+保留两套原版字体，按字形覆盖范围回退：`，。！？` 等常用中文标点使用 OPPO；JetBrains Mono 自带的 `｛｝`、智能引号、省略号等符号仍使用 JetBrains Mono，不额外改造字体。
+
+原始字体、许可证、版本来源和加载代码统一放在 [`resources/fonts/`](resources/fonts/README.md)，通过独立 `chunfe_fonts` target 内嵌到实验室，在 QML 创建前加载，无需用户安装字体或联网。界面控件、自绘 TextBlock、原生 Text 对照与性能测试使用同一套应用字体配置；系统绘制的窗口标题栏由操作系统控制。页面底部的“字体许可”可阅读两份原始许可证。`text_block` 模块本身不依赖这些字体，其他项目仍可通过 `font` 传入自己的配置。
+
+### 布局观察
+
+“布局观察”默认开启。TextBlock 显示**布局重建次数**；原生 Text 显示 `lineLaidOut` 中首行触发的**首行布局回调次数（观测）**。两者口径不同，不能把数字直接当成同一种内部布局次数。共同输入更新次数按文本快照或有效宽度变化记录；“重置统计”使用当前计数作为新基线，重新开启观察也会重置基线。
+
+TextBlock 的“最近布局”微秒数仅覆盖文本布局，不含内容解析、场景图提交、绘制或帧率。布局回调观察本身可能增加开销，因此性能模式会断开原生 Text 的观察连接。
+
+### 同负载性能测试
+
+选择 6／30／100 个实例后开始测试，本轮实例数随即固定。程序暂停流式更新、隐藏普通实验页面，使用固定 **640 × 320** 视口，仅加载当前被测组件的实例，并将全部实例交叠摆放在视口内。它测量固定视口下的一组同时更新；交叠场景的结果不能直接等同于真实聊天列表的 GPU 负载。
+
+先运行 TextBlock，再运行 Qt Quick Text。两组使用同一份预生成的纯文本快照和宽度序列，每批同时改变内容与宽度；各进行 **5 批预热、30 批正式测量**，预热不计入结果。表格报告每项的中位数、P95（最近秩法）以及有效样本／已完成正式批次数。可随时停止，保留已完成的部分结果。
+
+| 测量项 | 范围 |
+| --- | --- |
+| 属性更新 + polish（μs） | 属性传播、整棵样本树的 polish 与几何稳定检查；包含测试辅助代码的开销 |
+| 更新至帧提交（ms） | 从修改属性前到后续同一帧的 `afterFrameEnd`，包含调度等待；不是 GPU 完成时间或屏幕呈现时间 |
+| 帧同步至渲染记录（ms） | 整个窗口从 `beforeSynchronizing` 到 `afterRendering` 的墙钟区间，包含窗口内的其他工作 |
+
+辅助器最多执行 8 次 polish 树遍历；若仍观察到几何变化，该批标为未稳定。未稳定或数值无效的样本保留在完成批数中，但不参与中位数和 P95。这里的稳定检查不代表 Qt 内部布局轮数。这些测量用于本机同负载比较，不能直接推出 FPS、GPU 耗时或跨平台性能结论。
+
+## TextBlock 模块
+
+`modules/text_block` 是独立的静态 QML 模块，URI 和公开组件名均为 `TextBlock`，CMake target 为 `text_block`。一个实例承载一个段落：短文本贴合内容，达到包含内边距的 `maximumWidth` 后换行并增加高度。
+
+```qml
+import QtQuick
+import TextBlock
+
+TextBlock {
+    maximumWidth: 480
+    padding: 16
+    font.pixelSize: 18
+    textColor: "#24352d"
+    background: Rectangle {
+        color: "#edf3e8"
+        radius: 12
+    }
+    highlightColor: "#e2eeab"
+    content: ({
+        text: "先理解问题，再给出清晰的结论。",
+        ranges: [
+            { start: 9, end: 14, bold: true },
+            { start: 7, end: 11, highlight: true }
+        ]
+    })
+}
+```
+
+- `content` 是 `{ text, ranges }` 的完整快照；更新时一起替换文本与样式区间，不原地修改内部数组。
+- 区间使用 UTF-16 的 `[start, end)` 偏移；粗体和高亮可以重叠。无效区间会被忽略，区间边界不能拆开组合字符或 Emoji 字素簇。
+- `font`、`textColor`、`highlightColor` 控制文字样式；`padding` 默认 0。尺寸由组件的隐式宽高确定，`maximumWidth` 是包含内边距的总宽度上限。
+- `background` 是可选组件插槽，默认 `null`，不创建背景。调用方定义颜色、圆角、边框或自绘效果，模块将背景铺在文字下方；背景的隐式尺寸不影响文字布局。
+- 点击、焦点、快捷键、复制、菜单和 ToolTip 由调用方提供。实验页面与独立示例演示这些操作，`text_block` 本身只展示文字，不提供编辑和拖动选区。
+- `layoutCount`、`layoutMicroseconds`、`lineCount` 是只读诊断属性，用于本地实验。
+
+完整实验室位于 [`examples/text_block_lab`](examples/text_block_lab)，由根工程构建。独立接入示例 [`examples/text_block_consumer`](examples/text_block_consumer) 仍单独配置和构建，接入命令与接口说明见 [`modules/text_block/README.md`](modules/text_block/README.md)。
 
 ## 开发环境
 
-- Qt **6.12+**，需要 Qt Quick；macOS / Windows CI 固定使用 `6.12.0`。
+- Qt **6.12+**，实验应用需要 Qt Quick 和 Qt Quick Controls；独立 `text_block` 模块只需要 Qt Quick 及其基础库。macOS / Windows CI 固定使用 `6.12.0`。
 - 支持 **C++23** 的编译器。
 - CMake **3.24+**、Ninja。
 - macOS 使用 Apple Clang；Windows 使用 Qt 配套的 MinGW x64；Linux Flatpak 使用 KDE SDK 中的编译器。
@@ -27,10 +94,10 @@
 cmake --preset macos-arm64-release \
   -DCMAKE_PREFIX_PATH="$HOME/Qt/6.12.0/macos"
 cmake --build --preset macos-arm64-release
-open build/macos-arm64-release/Chunfe.app
+./build/macos-arm64-release/examples/text_block_lab/text_block_lab
 ```
 
-macOS 发布包面向 Apple Silicon，最低部署目标为 **14.4**。
+该预设面向 Apple Silicon，最低部署目标为 **14.4**。实验室生成普通可执行文件，不生成 `.app` bundle。
 
 ### Windows x64
 
@@ -39,7 +106,7 @@ macOS 发布包面向 Apple Silicon，最低部署目标为 **14.4**。
 ```powershell
 cmake --preset windows-x64-release "-DCMAKE_PREFIX_PATH=$env:QTDIR"
 cmake --build --preset windows-x64-release
-.\build\windows-x64-release\Chunfe.exe
+.\build\windows-x64-release\examples\text_block_lab\text_block_lab.exe
 ```
 
 `QTDIR` 指向 Qt 的 MinGW 安装目录，Qt 和匹配 MinGW 的 `bin` 目录需位于 `PATH`。CI 使用 Qt 6.12.0 配套的 MinGW 13.1.0。
@@ -51,23 +118,31 @@ cmake --build --preset windows-x64-release
 ```sh
 cmake --preset linux-x64-release -DCMAKE_PREFIX_PATH="$QTDIR"
 cmake --build --preset linux-x64-release
-./build/linux-x64-release/bin/Chunfe
+./build/linux-x64-release/examples/text_block_lab/text_block_lab
 ```
 
-发布包使用 Flatpak，在 KDE SDK 内构建。初始化配置沿用 `jian` 的 **Flathub Beta `6.12-beta`** 运行时，允许 Qt 6.12 补丁更新；构建时会检查 SDK 的 Qt 版本。构建及安装步骤见 [Linux Flatpak 说明](packaging/linux/README.md)。
+正式应用的 Flatpak 配置暂时保留，当前不用于打包实验室。该配置在 KDE SDK 内构建，沿用 `jian` 的 **Flathub Beta `6.12-beta`** 运行时，允许 Qt 6.12 补丁更新；构建时会检查 SDK 的 Qt 版本。待正式应用恢复后使用的构建及安装步骤见 [Linux Flatpak 说明](packaging/linux/README.md)。
 
 ### Debug 与检查
 
 ```sh
-cmake --preset debug -DCMAKE_PREFIX_PATH="/path/to/Qt/6.12.0/platform"
+cmake --preset debug \
+  -DCMAKE_PREFIX_PATH="/path/to/Qt/6.12.0/platform" \
+  -DTEXT_BLOCK_BUILD_TESTS=ON
 cmake --build --preset debug
-cmake --build --preset debug --target Chunfe_qmllint
+cmake --build --preset debug --target text_block_lab_qmllint text_block_qmllint
+cmake --build --preset debug --target text_block_tests text_block_layout_tests experiment_metrics_tests application_fonts_tests text_copy_actions_tests main_qml_tests
+ctest --test-dir build/debug --output-on-failure
 python3 -B -m unittest discover -s tests -v
 ```
 
-Python 测试覆盖 Release 发布逻辑，无需网络或 GitHub 凭据。当前没有应用自动退出的测试入口，因此未配置 CTest 启动测试；打包检查验证依赖部署和安装文件，不代表面试功能已通过测试。
+Qt Test 通过 `TEXT_BLOCK_BUILD_TESTS=ON` 启用，默认启用实验室时，上述六个测试 target 由 CTest 全部运行，使用 offscreen 平台与软件后端。测试覆盖 TextBlock、实验计时、字体和调用方复制交互；`main_qml_tests` 另外检查编辑器元数据能否解析模块，并在实验室主页面改变窗口宽度、胶囊宽度、段落数量和流式内容时检查布局及运行警告。字体测试检查实际字形使用的字体及字重，覆盖相邻中英文、数字、标点、粗体和 QML 控件继承。关闭实验室后仍可运行模块测试与 `application_fonts_tests`，三个实验室测试不再生成。Python 测试覆盖 Release 发布逻辑，无需网络或 GitHub 凭据。界面的实际绘制与系统剪贴板交互仍需在桌面环境检查；保留的打包检查验证依赖部署和安装文件，不代表面试功能已通过测试。
 
-## 三平台安装包
+Qt Creator 的代码模型通过 CMake 缓存中的 `QML_IMPORT_PATH` 查找构建目录下的模块；工程已自动加入 `build/.../qml`。首次配置后需构建一次，生成 `qmldir` 和 `.qmltypes`。`TextBlock.qml` 和 `examples/text_block_lab/Main.qml` 保留各自模块的显式导入，兼容 Qt Creator 对源码文件中 C++ 组件的识别。Qt 6.12 的 qmlls 元数据生成依赖也已补齐，避免增量配置继续使用旧路径。若编辑器保留旧诊断，可在构建后执行“工具 → QML/JS → 重置代码模型”。
+
+## 正式应用安装包（待恢复）
+
+以下为保留的正式应用打包配置，依赖未来的 `Chunfe` 可执行目标及安装规则。当前根目录没有正式应用入口，不能用这些命令打包实验室；CI 会跳过三平台打包与 Release。恢复正式应用时需一并接回目标、安装规则并验证这些脚本。
 
 | 平台 | 发布文件 | 内容 |
 | --- | --- | --- |
@@ -75,33 +150,33 @@ Python 测试覆盖 Release 发布逻辑，无需网络或 GitHub 凭据。当�
 | Windows x64 | `chunfe-0.1.0-windows-x64-setup.exe` | Inno Setup 安装包，含 Qt / QML 和 MinGW 运行库 |
 | Linux x64 | `chunfe-0.1.0-linux-x64.flatpak` | Flatpak 单文件应用包，依赖 KDE `6.12-beta` 运行时 |
 
-本地打包入口：
+待正式应用恢复后的本地打包入口（当前停用）：
 
 ```sh
-# macOS：先完成 macos-arm64-release 构建
-bash packaging/macos/package.sh
+# macOS：恢复正式应用后，先完成 macos-arm64-release 构建
+# bash packaging/macos/package.sh
 
-# Windows PowerShell：先完成 windows-x64-release 构建，安装 Inno Setup 6.3+
-./scripts/ci/package-windows.ps1
+# Windows PowerShell：恢复正式应用后，先完成 windows-x64-release 构建，安装 Inno Setup 6.3+
+# ./scripts/ci/package-windows.ps1
 
-# Linux：依赖与安装步骤见 packaging/linux/README.md
-bash scripts/ci/build-flatpak.sh
+# Linux：恢复正式应用后，依赖与安装步骤见 packaging/linux/README.md
+# bash scripts/ci/build-flatpak.sh
 ```
 
 macOS 打包会部署 Qt / QML、进行 ad hoc 签名并检查 DMG；Windows 会检查依赖并验证静默安装后的文件；Linux 会检查 Flatpak 的构建、导出和安装内容。这些流程尚未执行应用启动测试。
 
 macOS 尚未配置开发者证书签名或 Apple 公证，Windows 尚未配置代码签名证书。Linux 使用独立 Flatpak 包分发，尚未提交到 Flathub 应用目录。
 
-## 分支与自动发布
+## 分支与自动发布（当前暂停打包发布）
 
-日常在 **`dev`** 开发，合并到 **`main`** 后自动构建并发布。
+日常在 **`dev`** 开发，合并到 **`main`** 后触发工作流。工作流先检查根目录是否有正式应用入口 `main.cpp`；当前入口尚未实现，因此跳过三平台构建、打包和 Release。以下发布流程与规则保留供正式应用恢复后使用。
 
 ```sh
 git switch dev
 # 开发、验证、提交
 git push origin dev
 
-# 准备发布；也可以通过 dev → main 的 Pull Request 合并
+# 合并到 main；也可以通过 dev → main 的 Pull Request 合并
 git switch main
 git pull --ff-only origin main
 git merge --ff-only dev
@@ -110,11 +185,11 @@ git switch dev
 ```
 
 - 推送 `dev`、创建或更新 PR 均不会触发构建或发布。
-- 合并或推送到 `main`：自动构建、打包 macOS / Windows / Linux，三端全部成功后自动发布 GitHub Release。
-- 也可在 GitHub Actions 中选择 `main` 手动运行；选择其他分支时所有任务跳过。
+- 合并或推送到 `main`：先检查正式应用入口；存在入口且正式应用已接回构建后，构建、打包 macOS / Windows / Linux，三端全部成功后发布 GitHub Release。
+- 也可在 GitHub Actions 中选择 `main` 手动运行，同样受入口检查限制；选择其他分支时所有任务跳过。
 - 工作流默认只有 `contents: read`，仅 Release 任务使用 `contents: write`，通过内置 `github.token` 发布，无需额外发布 Secret。
 
-合并后，在 Actions 中确认运行标题包含 `push`、`main` 和本次提交 SHA；三平台任务与发布任务均成功后，再确认 Release 标签指向该提交，并包含三个安装包。标题中的 `workflow_dispatch` 表示手动运行，只能验证构建与发布，不能作为推送自动触发成功的依据。
+当前合并后应看到入口检查任务执行成功、三平台任务与发布任务跳过。正式应用恢复后，在 Actions 中确认运行标题包含 `push`、`main` 和本次提交 SHA；三平台任务与发布任务均成功后，再确认 Release 标签指向该提交，并包含三个安装包。标题中的 `workflow_dispatch` 表示手动运行，只能验证构建与发布，不能作为推送自动触发成功的依据。
 
 GitHub 远端为 `https://github.com/rangerzy/chunfe.git`，默认分支为 `main`。本地 `main`、`dev` 分别跟踪 `origin/main`、`origin/dev`。
 
@@ -127,13 +202,16 @@ GitHub 远端为 `https://github.com/rangerzy/chunfe.git`，默认分支为 `mai
 ## 工程结构
 
 ```text
-CMakeLists.txt             # 项目、版本、Qt Quick 模块与安装规则
+CMakeLists.txt             # 项目、版本、共享模块与实验室构建开关；正式入口待实现
 CMakePresets.json          # 三平台 Release 与 Debug 构建预设
-main.cpp                   # 现有应用入口
-Main.qml / Test.qml        # 现有界面骨架
-packaging/                 # DMG、Inno Setup、Flatpak 配置
-scripts/ci/                # Windows / Linux 打包脚本
-.github/workflows/         # main 分支构建与自动发布
+modules/text_block/        # 可复用静态 QML 模块与 Qt Test
+resources/fonts/           # OPPO / JetBrains 原始字体、许可证及应用字体加载
+examples/text_block_lab/   # 实验室入口、QML 页面、按钮、复制交互、剪贴板与批次计时
+  tests/                   # 实验室主页面、计时与复制交互 Qt Test
+examples/text_block_consumer/ # 不依赖应用业务的独立接入示例
+packaging/                 # 保留的正式应用 DMG、Inno Setup、Flatpak 配置（待恢复）
+scripts/ci/                # 保留的正式应用 Windows / Linux 打包脚本（待恢复）
+.github/workflows/         # main 分支入口检查与正式应用构建发布（当前跳过打包发布）
 .github/scripts/           # Release 发布脚本
-tests/                     # Release 发布脚本离线测试
+tests/                     # Release 离线测试与共享字体 Qt Test
 ```

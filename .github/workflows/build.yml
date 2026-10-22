@@ -13,9 +13,32 @@ env:
   QT_VERSION: "6.12.0"
 
 jobs:
+  application:
+    name: Check application entry point
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      available: ${{ steps.entrypoint.outputs.available }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check for the application entry point
+        id: entrypoint
+        shell: bash
+        run: |
+          if [[ -f main.cpp ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "The application entry point is not present; packaging and release are skipped."
+          fi
+
   macos:
     name: macOS arm64 DMG
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: application
+    if: needs.application.outputs.available == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: macos-15
     timeout-minutes: 30
     defaults:
@@ -60,7 +83,8 @@ jobs:
 
   windows:
     name: Windows x64 installer
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: application
+    if: needs.application.outputs.available == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: windows-2025
     timeout-minutes: 30
     defaults:
@@ -124,7 +148,8 @@ jobs:
 
   linux:
     name: Linux x64 Flatpak
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: application
+    if: needs.application.outputs.available == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:
@@ -154,8 +179,8 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [macos, windows, linux]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [application, macos, windows, linux]
+    if: needs.application.outputs.available == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
