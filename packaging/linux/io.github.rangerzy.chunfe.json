@@ -1,0 +1,37 @@
+{
+  "app-id": "io.github.rangerzy.chunfe",
+  "runtime": "org.kde.Platform",
+  "runtime-version": "6.12-beta",
+  "sdk": "org.kde.Sdk",
+  "branch": "stable",
+  "command": "Chunfe",
+  "appstream-compose": false,
+  "finish-args": [
+    "--share=ipc",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--device=dri"
+  ],
+  "modules": [
+    {
+      "name": "chunfe",
+      "buildsystem": "cmake-ninja",
+      "builddir": true,
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../..",
+          "skip": [
+            ".git",
+            ".flatpak-builder",
+            "build",
+            "dist"
+          ]
+        }
+      ]
+    }
+  ]
+}
