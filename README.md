@@ -51,7 +51,7 @@ cmake --build --preset windows-x64-release
 ```sh
 cmake --preset linux-x64-release -DCMAKE_PREFIX_PATH="$QTDIR"
 cmake --build --preset linux-x64-release
-./build/linux-x64-release/Chunfe
+./build/linux-x64-release/bin/Chunfe
 ```
 
 发布包使用 Flatpak，在 KDE SDK 内构建。初始化配置沿用 `jian` 的 **Flathub Beta `6.12-beta`** 运行时，允许 Qt 6.12 补丁更新；构建时会检查 SDK 的 Qt 版本。构建及安装步骤见 [Linux Flatpak 说明](packaging/linux/README.md)。

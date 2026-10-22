@@ -50,6 +50,10 @@ if(APPLE)
 endif()
 
 if(UNIX AND NOT APPLE)
+    # The QML module already creates a Chunfe directory in the build tree.
+    set_target_properties(Chunfe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+    )
     install(FILES packaging/linux/io.github.rangerzy.chunfe.desktop
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
     install(FILES packaging/linux/io.github.rangerzy.chunfe.svg
