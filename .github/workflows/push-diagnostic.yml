@@ -1,0 +1,20 @@
+name: Diagnose main push trigger
+
+"on":
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  event:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Record the automatic trigger
+        shell: bash
+        run: |
+          printf 'event=%s\nref=%s\nsha=%s\n' \
+            "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
