@@ -114,6 +114,8 @@ git switch dev
 - 也可在 GitHub Actions 中选择 `main` 手动运行；选择其他分支时所有任务跳过。
 - 工作流默认只有 `contents: read`，仅 Release 任务使用 `contents: write`，通过内置 `github.token` 发布，无需额外发布 Secret。
 
+合并后，在 Actions 中确认运行标题包含 `push`、`main` 和本次提交 SHA；三平台任务与发布任务均成功后，再确认 Release 标签指向该提交，并包含三个安装包。标题中的 `workflow_dispatch` 表示手动运行，只能验证构建与发布，不能作为推送自动触发成功的依据。
+
 GitHub 远端为 `https://github.com/rangerzy/chunfe.git`，默认分支为 `main`。本地 `main`、`dev` 分别跟踪 `origin/main`、`origin/dev`。
 
 版本唯一来源为 `CMakeLists.txt` 的 `project(Chunfe VERSION ...)`。Release 标签为 `v<版本>`，标题为 `Chunfe <版本>`。
