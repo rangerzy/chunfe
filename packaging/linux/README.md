@@ -1,7 +1,9 @@
 # Linux Flatpak
 
 春风的 Linux 包面向 x86_64，应用 ID 为 `io.github.rangerzy.chunfe`，
-可执行文件为 `Chunfe`。打包在 KDE SDK 内构建当前工程，宿主机无需另装 Qt。
+可执行文件为 `Chunfe`。打包在 KDE SDK 内构建根工程的最小 Chunfe 应用壳，宿主机无需另装 Qt。
+根工程不包含 `examples/`，CI 也不构建或测试示例。应用尚未实现面试辅助功能。
+安装规则提供 `bin/Chunfe`、desktop 文件与 SVG 图标。
 
 ## 运行时依赖
 

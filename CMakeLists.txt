@@ -2,60 +2,30 @@ cmake_minimum_required(VERSION 3.24)
 
 project(Chunfe VERSION 0.1.0 LANGUAGES CXX)
 
-find_package(Qt6 6.12 REQUIRED COMPONENTS Quick)
+find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
 qt_standard_project_setup(REQUIRES 6.12)
+include(cmake/ChunfeQmlTooling.cmake)
+chunfe_setup_qml_tooling()
+include(GNUInstallDirs)
 
-qt_add_executable(Chunfe
-    main.cpp
-)
+option(CHUNFE_BUILD_TESTS "Build Chunfe application tests" OFF)
+option(TEXT_BLOCK_BUILD_TESTS "Build TextBlock module tests" ${CHUNFE_BUILD_TESTS})
+if(CHUNFE_BUILD_TESTS OR TEXT_BLOCK_BUILD_TESTS)
+    enable_testing()
+endif()
+add_subdirectory(modules)
+add_subdirectory(resources/fonts)
+add_subdirectory(src)
 
-qt_add_qml_module(Chunfe
-    URI Chunfe
-    VERSION 1.0
-    QML_FILES Main.qml
-    QML_FILES Test.qml
-)
-
-target_link_libraries(Chunfe PRIVATE Qt6::Quick)
-target_compile_definitions(Chunfe PRIVATE
-    $<$<CONFIG:Debug,RelWithDebInfo>:QT_QML_DEBUG>
-)
-
-set_target_properties(Chunfe PROPERTIES
-    CXX_STANDARD 23
-    CXX_STANDARD_REQUIRED ON
-    MACOSX_BUNDLE TRUE
-    MACOSX_BUNDLE_BUNDLE_NAME "春风"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.rangerzy.chunfe"
-    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-    WIN32_EXECUTABLE TRUE
-)
+if(CHUNFE_BUILD_TESTS)
+    find_package(Qt6 6.12 REQUIRED COMPONENTS Test)
+    qt_add_executable(application_fonts_tests tests/application_fonts_tests.cpp)
+    target_compile_features(application_fonts_tests PRIVATE cxx_std_23)
+    target_link_libraries(application_fonts_tests PRIVATE
+        Qt6::Test Qt6::QuickControls2 chunfe_fonts text_block text_blockplugin)
+    add_test(NAME application_fonts_tests COMMAND application_fonts_tests)
+    set_tests_properties(application_fonts_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+endif()
 
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/version.txt" CONTENT "${PROJECT_VERSION}\n")
-
-include(GNUInstallDirs)
-install(TARGETS Chunfe
-    BUNDLE DESTINATION .
-    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-)
-
-if(APPLE)
-    qt_generate_deploy_qml_app_script(
-        TARGET Chunfe
-        OUTPUT_SCRIPT chunfe_deploy_script
-        DEPLOY_TOOL_OPTIONS -no-codesign -verbose=1
-    )
-    install(SCRIPT "${chunfe_deploy_script}")
-endif()
-
-if(UNIX AND NOT APPLE)
-    # The QML module already creates a Chunfe directory in the build tree.
-    set_target_properties(Chunfe PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
-    )
-    install(FILES packaging/linux/io.github.rangerzy.chunfe.desktop
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
-    install(FILES packaging/linux/io.github.rangerzy.chunfe.svg
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
-endif()
