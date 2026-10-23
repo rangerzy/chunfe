@@ -26,9 +26,8 @@ if (-not (Test-Path -LiteralPath $application -PathType Leaf)) {
     throw "CMake did not install $application"
 }
 
-# The QML sources are in the project root. Include their imports and the
-# matching MinGW runtime in the installer payload.
-windeployqt --release --compiler-runtime --qmldir $sourceDir $application
+# Scan the application sources, keeping independent examples out of deployment.
+windeployqt --release --compiler-runtime --qmldir (Join-Path $sourceDir "src") $application
 @"
 [Paths]
 Prefix=.

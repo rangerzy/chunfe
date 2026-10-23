@@ -31,7 +31,7 @@ private slots:
     void editorMetadataResolvesComponents_data()
     {
         QTest::addColumn<QString>("file");
-        QTest::newRow("module") << QStringLiteral(CHUNFE_SOURCE_DIR "/modules/text_block/TextBlock.qml");
+        QTest::newRow("module") << QStringLiteral(TEXT_BLOCK_SOURCE_DIR "/TextBlock.qml");
         QTest::newRow("application") << QStringLiteral(TEXT_BLOCK_LAB_SOURCE_DIR "/Main.qml");
         QTest::newRow("custom-control") << QStringLiteral(TEXT_BLOCK_LAB_SOURCE_DIR "/AppActionButton.qml");
     }
@@ -39,7 +39,7 @@ private slots:
     void editorMetadataResolvesComponents()
     {
         QFETCH(QString, file);
-        const QString metadata = QStringLiteral(CHUNFE_BINARY_DIR "/.qt/.qmlls.build.ini");
+        const QString metadata = QStringLiteral(TEXT_BLOCK_LAB_BINARY_DIR "/.qt/.qmlls.build.ini");
         QVERIFY2(QFile::exists(metadata), qPrintable(metadata));
         QSettings settings(metadata, QSettings::IniFormat);
         const int size = settings.beginReadArray("workspaces");
@@ -64,7 +64,7 @@ private slots:
         arguments << file;
         QProcess lint;
         lint.setProcessChannelMode(QProcess::MergedChannels);
-        lint.start(QStringLiteral(CHUNFE_QMLLINT), arguments);
+        lint.start(QStringLiteral(TEXT_BLOCK_LAB_QMLLINT), arguments);
         QVERIFY(lint.waitForStarted());
         QVERIFY(lint.waitForFinished(10000));
         const QByteArray diagnostics = lint.readAll();

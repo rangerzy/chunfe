@@ -542,7 +542,7 @@ Window {
                                 font: window.paragraphFont
                                 textColor: window.ink
                                 background: Rectangle {
-                                    color: lineColor
+                                    color: window.lineColor
                                     radius: 12
                                 }
                                 highlightColor: "#e2eeab"

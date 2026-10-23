@@ -1,6 +1,6 @@
 # 应用字体资源
 
-本目录统一管理应用字体、原始许可证和启动加载代码。`chunfe_fonts` 是仅依赖 Qt Gui 的共享静态资源 target；当前由 [`examples/text_block_lab`](../../examples/text_block_lab) 实验室和启用项目字体的独立接入示例使用，后续正式应用也可接入。`modules/text_block` 不依赖它，消费者可自行选择字体。
+本目录统一管理应用字体、原始许可证和启动加载代码。`chunfe_fonts` 是仅依赖 Qt Gui 的共享静态资源 target；由根工程的 Chunfe 主应用、独立 [`examples/text_block_lab`](../../examples/text_block_lab) 实验室和启用项目字体的独立接入示例使用。`modules/text_block` 不依赖它，消费者可自行选择字体。
 
 ## 字体与来源
 
@@ -43,7 +43,7 @@ QQmlApplicationEngine engine;
 
 ## 许可证与声明
 
-应用使用 **OPPO Sans 字体**。版权所有 © 2024 Guangdong OPPO Mobile Telecommunications Corp., Ltd. 原始许可位于 [`oppo-sans/OPPO Sans 4.0 License Notice.txt`](<oppo-sans/OPPO Sans 4.0 License Notice.txt>)；它要求在软件中显著声明使用 OPPO Sans，保留许可和版权声明，并随软件分发未修改的字体。TextBlock 实验室与启用项目字体的独立示例通过“字体许可”入口展示完整许可；初始化后的 `ChunfeFonts::licenseNotices()` 提供带标题的两份原文。该字体不能作为独立字体产品再分发。
+应用使用 **OPPO Sans 字体**。版权所有 © 2024 Guangdong OPPO Mobile Telecommunications Corp., Ltd. 原始许可位于 [`oppo-sans/OPPO Sans 4.0 License Notice.txt`](<oppo-sans/OPPO Sans 4.0 License Notice.txt>)；它要求在软件中显著声明使用 OPPO Sans，保留许可和版权声明，并随软件分发未修改的字体。Chunfe 主应用、TextBlock 实验室与启用项目字体的独立示例通过“字体许可”入口展示完整许可；初始化后的 `ChunfeFonts::licenseNotices()` 提供带标题的两份原文。该字体不能作为独立字体产品再分发。
 
 JetBrains Mono 的字体许可为 **SIL Open Font License 1.1**，原文位于 [`jetbrains-mono/OFL.txt`](jetbrains-mono/OFL.txt)。
 

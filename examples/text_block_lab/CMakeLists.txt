@@ -1,3 +1,43 @@
+cmake_minimum_required(VERSION 3.24)
+
+project(TextBlockLab LANGUAGES CXX)
+
+find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
+qt_standard_project_setup(REQUIRES 6.12)
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/ChunfeQmlTooling.cmake" OPTIONAL)
+if(COMMAND chunfe_setup_qml_tooling)
+    chunfe_setup_qml_tooling()
+else()
+    set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
+    set(QML_IMPORT_PATH "${QT_QML_OUTPUT_DIRECTORY}" CACHE STRING "QML tooling import paths")
+    set(QT_QML_GENERATE_QMLLS_INI ON)
+endif()
+
+get_filename_component(_default_text_block_source
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../modules/text_block" ABSOLUTE)
+set(TEXT_BLOCK_SOURCE_DIR "${_default_text_block_source}" CACHE PATH
+    "Path to the TextBlock module source directory")
+if(NOT EXISTS "${TEXT_BLOCK_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "Set TEXT_BLOCK_SOURCE_DIR to the path of modules/text_block")
+endif()
+
+get_filename_component(_default_fonts_source
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../resources/fonts" ABSOLUTE)
+set(CHUNFE_FONTS_SOURCE_DIR "${_default_fonts_source}" CACHE PATH
+    "Path to the font bundle required by TextBlockLab")
+if(NOT EXISTS "${CHUNFE_FONTS_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "Set CHUNFE_FONTS_SOURCE_DIR to the path of resources/fonts")
+endif()
+
+option(TEXT_BLOCK_BUILD_TESTS "Build TextBlock module tests" OFF)
+option(TEXT_BLOCK_LAB_BUILD_TESTS "Build TextBlockLab tests" OFF)
+if(TEXT_BLOCK_BUILD_TESTS OR TEXT_BLOCK_LAB_BUILD_TESTS)
+    enable_testing()
+endif()
+add_subdirectory("${TEXT_BLOCK_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/text_block")
+add_subdirectory("${CHUNFE_FONTS_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/fonts")
+
 set(text_block_lab_qml_files Main.qml AppActionButton.qml TextCopyActions.qml Test.qml)
 
 qt_add_executable(text_block_lab main.cpp)
@@ -16,7 +56,7 @@ target_compile_definitions(text_block_lab PRIVATE
 )
 set_target_properties(text_block_lab PROPERTIES WIN32_EXECUTABLE TRUE)
 
-if(TEXT_BLOCK_BUILD_TESTS)
+if(TEXT_BLOCK_LAB_BUILD_TESTS)
     find_package(Qt6 6.12 REQUIRED COMPONENTS Test)
     qt_add_executable(experiment_metrics_tests
         tests/experiment_metrics_tests.cpp experiment_metrics.h experiment_metrics.cpp)
@@ -48,10 +88,10 @@ if(TEXT_BLOCK_BUILD_TESTS)
     target_include_directories(main_qml_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_features(main_qml_tests PRIVATE cxx_std_23)
     target_compile_definitions(main_qml_tests PRIVATE
-        CHUNFE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+        TEXT_BLOCK_SOURCE_DIR="${TEXT_BLOCK_SOURCE_DIR}"
         TEXT_BLOCK_LAB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-        CHUNFE_BINARY_DIR="${CMAKE_BINARY_DIR}"
-        CHUNFE_QMLLINT="$<TARGET_FILE:Qt6::qmllint>")
+        TEXT_BLOCK_LAB_BINARY_DIR="${CMAKE_BINARY_DIR}"
+        TEXT_BLOCK_LAB_QMLLINT="$<TARGET_FILE:Qt6::qmllint>")
     target_link_libraries(main_qml_tests PRIVATE Qt6::Test Qt6::QuickControls2
         chunfe_fonts text_block text_blockplugin)
     add_dependencies(main_qml_tests text_block_lab)

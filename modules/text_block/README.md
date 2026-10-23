@@ -110,30 +110,31 @@ TextBlock 实验室与独立示例在调用方接入复制交互，演示右键�
 
 ## 构建与检查
 
-[`examples/text_block_lab`](../../examples/text_block_lab) 包含完整实验页面、计时辅助器与调用方交互，QML URI 为 `TextBlockLab`。在仓库根目录构建实验室及模块测试：
+根工程构建最小 Chunfe 应用，示例均为独立工程；根工程与 CI 不构建或测试示例。根目录使用 `-DCHUNFE_BUILD_TESTS=ON` 时，`TEXT_BLOCK_BUILD_TESTS` 默认跟随开启，也可显式覆盖；主应用 GUI 模块的 lint target 为 `chunfe_gui_qmllint`。
+
+[`examples/text_block_lab`](../../examples/text_block_lab) 包含完整实验页面、计时辅助器与调用方交互，QML URI 为 `TextBlockLab`。在仓库根目录独立配置：
 
 ```sh
-cmake --preset debug \
+cmake -S examples/text_block_lab -B build/text-block-lab -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_PREFIX_PATH="/path/to/Qt/6.12.0/platform" \
-  -DTEXT_BLOCK_BUILD_TESTS=ON
-cmake --build --preset debug
-cmake --build --preset debug --target text_block_lab_qmllint text_block_qmllint
-cmake --build --preset debug --target text_block_tests text_block_layout_tests
-ctest --test-dir build/debug -R text_block --output-on-failure
-./build/debug/examples/text_block_lab/text_block_lab
+  -DTEXT_BLOCK_LAB_BUILD_TESTS=ON -DTEXT_BLOCK_BUILD_TESTS=ON
+cmake --build build/text-block-lab
+cmake --build build/text-block-lab --target text_block_lab_qmllint text_block_qmllint
+ctest --test-dir build/text-block-lab --output-on-failure
+./build/text-block-lab/text_block_lab
 ```
 
-根工程默认 `TEXT_BLOCK_BUILD_LAB=ON`，生成普通可执行文件 `text_block_lab`（Windows 为 `text_block_lab.exe`），不生成正式 `Chunfe` 应用。仅使用共享模块与字体时可设置 `-DTEXT_BLOCK_BUILD_LAB=OFF`；关闭实验室后不要请求其 `text_block_lab_qmllint` target。
+实验室生成普通可执行文件 `text_block_lab`（Windows 为 `text_block_lab.exe`），不生成 `.app`。`TEXT_BLOCK_LAB_BUILD_TESTS` 启用实验室自身的计时、复制和主页面测试；`TEXT_BLOCK_BUILD_TESTS` 启用模块测试，两者默认均为 OFF。实验室不生成根应用的 `application_fonts_tests`。模块与字体资源默认指向仓库路径，分别可用 `TEXT_BLOCK_SOURCE_DIR` 和 `CHUNFE_FONTS_SOURCE_DIR` 覆盖；实验室必需字体资源。
 
 模块测试配置使用 offscreen 平台与软件后端。测试覆盖文字布局、高亮、可选背景和调用方事件接入；目标平台字体及图形后端仍需结合桌面运行验证。系统剪贴板属于应用层的验证范围。
 
-[`examples/text_block_consumer`](../../examples/text_block_consumer) 是独立 CMake 工程，只需要此模块目录与 Qt。以下命令在仓库根目录执行：
+[`examples/text_block_consumer`](../../examples/text_block_consumer) 是独立 CMake 工程，默认使用本仓库的模块目录，也可用 `TEXT_BLOCK_SOURCE_DIR` 覆盖。以下命令在仓库根目录执行：
 
 ```sh
 cmake -S examples/text_block_consumer -B build/text-block-consumer -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_PREFIX_PATH="/path/to/Qt/6.12.0/platform" \
-  -DTEXT_BLOCK_SOURCE_DIR="$PWD/modules/text_block" \
   -DTEXT_BLOCK_BUILD_TESTS=OFF
 cmake --build build/text-block-consumer
 build/text-block-consumer/text_block_consumer

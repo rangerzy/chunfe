@@ -4,12 +4,21 @@ project(TextBlockConsumer LANGUAGES CXX)
 
 find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
 qt_standard_project_setup(REQUIRES 6.12)
-# Put imported QML modules under one root for the compiler and QML tooling.
-set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/ChunfeQmlTooling.cmake" OPTIONAL)
+if(COMMAND chunfe_setup_qml_tooling)
+    chunfe_setup_qml_tooling()
+else()
+    set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
+    set(QML_IMPORT_PATH "${QT_QML_OUTPUT_DIRECTORY}" CACHE STRING "QML tooling import paths")
+    set(QT_QML_GENERATE_QMLLS_INI ON)
+endif()
 
-set(TEXT_BLOCK_SOURCE_DIR "" CACHE PATH "Absolute path to the TextBlock module source directory")
+get_filename_component(_default_text_block_source
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../modules/text_block" ABSOLUTE)
+set(TEXT_BLOCK_SOURCE_DIR "${_default_text_block_source}" CACHE PATH
+    "Path to the TextBlock module source directory")
 if(NOT EXISTS "${TEXT_BLOCK_SOURCE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "Set TEXT_BLOCK_SOURCE_DIR to the absolute path of modules/text_block")
+    message(FATAL_ERROR "Set TEXT_BLOCK_SOURCE_DIR to the path of modules/text_block")
 endif()
 
 option(TEXT_BLOCK_BUILD_TESTS "Build TextBlock module tests" OFF)
@@ -28,6 +37,9 @@ endif()
 set(CHUNFE_FONTS_SOURCE_DIR "${_default_fonts_source}" CACHE PATH
     "Optional font bundle directory; leave empty to use the application's system font")
 if(CHUNFE_FONTS_SOURCE_DIR)
+    if(NOT EXISTS "${CHUNFE_FONTS_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "Set CHUNFE_FONTS_SOURCE_DIR to a font bundle directory, or leave it empty")
+    endif()
     add_subdirectory("${CHUNFE_FONTS_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/fonts")
 endif()
 

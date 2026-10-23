@@ -28,7 +28,7 @@ jobs:
         id: entrypoint
         shell: bash
         run: |
-          if [[ -f main.cpp ]]; then
+          if [[ -f src/app/main.cpp && -f src/gui/Main.qml ]]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
