@@ -8,9 +8,14 @@ Set-StrictMode -Version Latest
 
 $sourceDir = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $buildPath = (Resolve-Path (Join-Path $sourceDir $BuildDir)).Path
-$version = (Get-Content -LiteralPath (Join-Path $buildPath "version.txt") -Raw).Trim()
-if ($version -notmatch '^\d+\.\d+\.\d+$') {
+$version = (Get-Content -LiteralPath (Join-Path $buildPath "version.txt") -Raw).TrimEnd([char[]]"`r`n")
+if ($version -notmatch '\A(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}\z') {
     throw "Invalid application version: $version"
+}
+foreach ($part in $version.Split('.')) {
+    if ([int]$part -gt 65535) {
+        throw "Invalid application version: $version (each component must be at most 65535)"
+    }
 }
 
 $stageDir = Join-Path $buildPath "package"

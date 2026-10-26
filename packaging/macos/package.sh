@@ -4,11 +4,20 @@ set -euo pipefail
 source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_dir="${1:-$source_dir/build/macos-arm64-release}"
 build_dir="$(cd "$build_dir" && pwd)"
-version="$(tr -d '\r\n' < "$build_dir/version.txt")"
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+version="$(cat "$build_dir/version.txt")"
+version="${version%$'\r'}"
+component='(0|[1-9][0-9]{0,4})'
+if [[ ! "$version" =~ ^$component\.$component\.$component\.$component$ ]]; then
     echo "Invalid application version: $version" >&2
     exit 1
 fi
+IFS=. read -r -a version_parts <<< "$version"
+for part in "${version_parts[@]}"; do
+    if (( part > 65535 )); then
+        echo "Invalid application version: $version (each component must be at most 65535)" >&2
+        exit 1
+    fi
+done
 
 # Stage outside the checkout: synced Documents folders can reattach Finder
 # metadata while codesign is sealing an application bundle.

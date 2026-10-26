@@ -16,20 +16,7 @@ for command in flatpak flatpak-builder python3 desktop-file-validate eu-strip eu
     }
 done
 
-version="$(python3 - <<'PY'
-import pathlib
-import re
-
-source = pathlib.Path("CMakeLists.txt").read_text(encoding="utf-8")
-match = re.search(
-    r"(?m)^\s*project\(\s*Chunfe\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)\s+LANGUAGES\s+CXX\s*\)",
-    source,
-)
-if not match:
-    raise SystemExit("Cannot read the project version from CMakeLists.txt")
-print(match.group(1))
-PY
-)"
+version="$(python3 scripts/ci/app_version.py)"
 
 app_id=io.github.rangerzy.chunfe
 runtime_branch=6.12-beta
@@ -61,6 +48,12 @@ mkdir -p build dist
 flatpak-builder --user --arch=x86_64 --force-clean \
     --disable-rofiles-fuse --rebuild-on-sdk-change \
     --repo="$repo_dir" "$build_dir" "$manifest"
+
+# Verify the version produced by the same CMake configuration as the binary.
+if ! printf '%s\n' "$version" | cmp -s - "$build_dir/files/share/chunfe/version.txt"; then
+    echo "Built Flatpak version does not match declared version $version" >&2
+    exit 1
+fi
 
 test -x "$build_dir/files/bin/Chunfe"
 test -f "$build_dir/files/share/applications/$app_id.desktop"
@@ -102,6 +95,7 @@ if not binary.is_file() or not binary.stat().st_mode & 0o111:
     raise SystemExit("Installed Chunfe executable is missing or not executable")
 for relative in (
     "bin/Chunfe",
+    "share/chunfe/version.txt",
     f"share/applications/{app_id}.desktop",
     f"share/icons/hicolor/scalable/apps/{app_id}.svg",
 ):

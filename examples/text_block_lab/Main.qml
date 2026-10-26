@@ -437,7 +437,7 @@ Window {
                         font.pixelSize: 13
                     }
                     SmallText {
-                        text: qsTr("中文：OPPO Sans 4.0  ·  English / 0123：JetBrains Mono")
+                        text: qsTr("中文：OPPO Sans 4.0  ·  English / 0123：Inter")
                     }
                 }
                 Item {

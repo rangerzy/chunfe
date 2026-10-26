@@ -27,10 +27,10 @@ bash scripts/ci/build-flatpak.sh
 
 脚本在当前用户的 Flatpak 配置中添加 Flathub 和 Flathub Beta，安装 SDK/运行时，
 从项目根目录构建，并生成 `dist/chunfe-<版本>-linux-x64.flatpak`。
-版本取自 `CMakeLists.txt` 的 `project(Chunfe VERSION ...)`，初始版本为 `0.1.0`。
+版本由 `cmake/AppVersion.cmake` 中四个 `VERSION_*` 数值组成，初始为 `0.1.0.0`。打包脚本通过共享的 `scripts/ci/app_version.py` 读取声明版本，不需要先配置 Qt；构建后会核对实际版本。版本标签与安装包名使用完整四段，Flatpak 的 `stable` 分支保持独立。
 
 构建后会为当前用户安装生成的包，检查应用 ref、运行时、启动命令等元数据，
-并比较安装后的可执行文件、desktop 文件和图标的 SHA-256。
+并比较安装后的可执行文件、版本文件、desktop 文件和图标的 SHA-256。
 当前没有自动退出的测试模式，因此**打包流程不启动应用，也未执行自动启动测试**。
 脚本会保留已安装的包，便于后续手动验证。
 

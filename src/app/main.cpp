@@ -4,7 +4,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlExtensionPlugin>
 
-Q_IMPORT_QML_PLUGIN(ChunfePlugin)
+// Q_IMPORT_QML_PLUGIN(ChunfePlugin)
 
 int main(int argc, char *argv[])
 {

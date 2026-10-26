@@ -92,7 +92,7 @@ TextBlock {
 
 布局使用 `QTextLayout`，渲染通过 Qt Quick 的 `QSGTextNode`。字体回退、Emoji 外观和测量结果随系统字体与渲染后端变化，应在目标平台实际检查。
 
-默认字体继承应用创建组件时的 `QGuiApplication::font()`，也可以通过 `font` 显式传入。TextBlock 实验室在应用层加载 `resources/fonts/` 的 OPPO Sans / JetBrains Mono，模块不依赖该字体资源 target，也不硬编码品牌字体。
+默认字体继承应用创建组件时的 `QGuiApplication::font()`，也可以通过 `font` 显式传入。TextBlock 实验室在应用层加载 `resources/fonts/` 的 OPPO Sans 4.0 与 Inter 4.1，默认候选列表为 `Inter → OPPO Sans 4.0`，并将 OPPO 注册为 Han 脚本回退。应用同时注册 Inter 与 Inter Display 的全部静态字重及斜体；需要时可通过 `font.family: "Inter Display"` 显式选择 Display 系列。模块不依赖该字体资源 target，也不硬编码品牌字体。
 
 Qt 6.12 的距离场字形节点在创建与回收后可能使用不同的抗锯齿模式。当前 TextBlock 实验室与独立接入示例在创建 `QGuiApplication` 前默认设置 `QSG_DISTANCEFIELD_ANTIALIASING=gray`，让新建节点与 Quick Text 回收节点都使用灰度抗锯齿；已有环境设置会被保留。这是应用级的实验配置，模块本身不修改进程环境。接入其他项目时可按目标显示器选择相同配置。本机 cocoa / Metal / DPR=2 的同背景对照中，两组普通中英文文本在统一灰度后逐像素一致；该结果不代替其他平台与字体的验证。
 

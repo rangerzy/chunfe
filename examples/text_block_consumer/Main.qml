@@ -71,7 +71,7 @@ Window {
             Text {
                 visible: window.projectFonts
                 width: parent.width
-                text: qsTr("中文：OPPO Sans 4.0  ·  English / 0123：JetBrains Mono")
+                text: qsTr("中文：OPPO Sans 4.0  ·  English / 0123：Inter")
                 wrapMode: Text.Wrap
                 font.pixelSize: 12
                 color: "#6d7b73"

@@ -18,9 +18,9 @@
 
 ### 应用字体
 
-中文使用 **OPPO Sans 4.0**，英文和 ASCII 数字使用 **JetBrains Mono 2.304**。正文使用 Regular（400），保留标题半粗体（600）和重点加粗（700）；Emoji 沿用平台字体回退。
+默认字体候选列表为 **Inter → OPPO Sans 4.0**，并将 OPPO 显式注册为 Han 脚本回退。英文和 ASCII 数字优先使用 **Inter 4.1**，中文使用 **OPPO Sans 4.0**。随应用内嵌 Inter 与 Inter Display 的全部 36 个静态 TTF：两个系列各包含 100–900 的九个字重及对应斜体。正文使用 Regular（400），标题和重点可继续请求半粗体（600）和粗体（700）；需要展示字体的组件可显式选择 `Inter Display`。Emoji 沿用平台字体回退。
 
-保留两套原版字体，按字形覆盖范围回退：`，。！？` 等常用中文标点使用 OPPO；JetBrains Mono 自带的 `｛｝`、智能引号、省略号等符号仍使用 JetBrains Mono，不额外改造字体。
+保留原始字体数据，按字形覆盖范围选择符号与标点的字体，不按全角／半角逐字符强制分配。Inter 未覆盖的字形继续回退；不修改或子集化字体。Inter 的变量字体、TTC、OTF 和 Web 格式保留为来源文件，不打包到应用。
 
 原始字体、许可证、版本来源和加载代码统一放在 [`resources/fonts/`](resources/fonts/README.md)，通过独立 `chunfe_fonts` target 内嵌到主应用及实验室，在 QML 创建前加载，无需用户安装字体或联网。界面控件、自绘 TextBlock、原生 Text 对照与性能测试使用同一套应用字体配置；系统绘制的窗口标题栏由操作系统控制。实验页面底部的“字体许可”可阅读两份原始许可证。`text_block` 模块本身不依赖这些字体，其他项目仍可通过 `font` 传入自己的配置。
 
@@ -81,6 +81,12 @@ TextBlock {
 
 完整实验室位于 [`examples/text_block_lab`](examples/text_block_lab)。它与接入示例 [`examples/text_block_consumer`](examples/text_block_consumer) 均单独配置和构建，接入命令与接口说明见 [`modules/text_block/README.md`](modules/text_block/README.md)。
 
+## Calendar 模块
+
+[`modules/calendar`](modules/calendar/README.md) 是从 `examples/calendar_before_today` 提取的静态 QML 模块，通过 `import Calendar` 使用 `PastDateCalendar`。支持起始年月到今天的日期选择、年月导航、液态选中动画、日期数据圆点及选择／月份变化通知，不依赖主应用或字体资源。
+
+独立接入示例 [`examples/calendar_consumer`](examples/calendar_consumer/README.md) 展示日历和所选日期，可单独配置、构建及运行；原 calendar 示例保留为原型参考。
+
 ## 开发环境
 
 - Qt **6.12+**，主应用与示例需要 Qt Quick 和 Qt Quick Controls；独立 `text_block` 模块只需要 Qt Quick 及其基础库。macOS / Windows CI 固定使用 `6.12.0`。
@@ -132,12 +138,12 @@ cmake --preset debug \
   -DCMAKE_PREFIX_PATH="/path/to/Qt/6.12.0/platform" \
   -DCHUNFE_BUILD_TESTS=ON
 cmake --build --preset debug
-cmake --build --preset debug --target chunfe_gui_qmllint text_block_qmllint
+cmake --build --preset debug --target chunfe_gui_qmllint text_block_qmllint calendar_qmllint
 ctest --test-dir build/debug --output-on-failure
 python3 -B -m unittest discover -s tests -v
 ```
 
-`CHUNFE_BUILD_TESTS=ON` 启用根应用的 `application_fonts_tests`；`TEXT_BLOCK_BUILD_TESTS` 首次配置时默认跟随该开关，也可显式覆盖。模块测试为 `text_block_tests` 和 `text_block_layout_tests`。Qt Test 使用 offscreen 平台与软件后端；字体测试检查实际字形使用的字体及字重，覆盖相邻中英文、数字、标点、粗体和 QML 控件继承。Python 测试覆盖 Release 发布逻辑，无需网络或 GitHub 凭据。
+`CHUNFE_BUILD_TESTS=ON` 启用根应用的 `application_fonts_tests`；`TEXT_BLOCK_BUILD_TESTS` 与 `CALENDAR_BUILD_TESTS` 首次配置时默认跟随该开关，也可显式覆盖。模块测试为 `text_block_tests`、`text_block_layout_tests` 和 `calendar_tests`。Qt Test 使用 offscreen 平台与软件后端；字体测试检查实际字形使用的字体及字重，覆盖相邻中英文、数字、标点、粗体和 QML 控件继承。Python 测试覆盖 Release 发布逻辑，无需网络或 GitHub 凭据。
 
 实验室需单独配置；以下命令同时启用实验室与模块测试：
 
@@ -187,52 +193,86 @@ macOS 尚未配置开发者证书签名或 Apple 公证，Windows 尚未配置�
 
 ## 分支与自动发布
 
-日常在 **`dev`** 开发，合并到 **`main`** 后触发工作流。工作流检查 `src/app/main.cpp` 与 `src/gui/Main.qml` 同时存在后，执行主应用的三平台构建、打包和 Release。CI 不构建或测试 `examples/`；示例检查由开发者单独运行。
+日常在 **`dev`** 开发，准备发布时手动递增 `cmake/AppVersion.cmake` 中的
+`VERSION_MAJOR`、`VERSION_MINOR`、`VERSION_PATCH` 或 `VERSION_BUILD`。
+四段组成唯一公开版本 `APP_VERSION`，例如 `0.1.0.0 → 0.1.0.1`。
+每段使用无前导零的十进制整数，范围为 `0..65535`。
+根 `CMakeLists.txt` 引入这份定义，应用版本、标签和三个安装包文件名均使用完整四段版本。
+本地仍可用 CMake `-DVERSION_BUILD=...` 等参数覆盖版本；正式发布必须与提交中的版本及标签一致。
 
 ```sh
-git switch dev
-# 开发、验证、提交
+# 在 dev 修改代码和 cmake/AppVersion.cmake，然后验证、提交并推送
+python3 scripts/ci/app_version.py
+python3 -B -m unittest discover -s tests -p 'test_*.py'
 git push origin dev
-
-# 合并到 main；也可以通过 dev → main 的 Pull Request 合并
-git switch main
-git pull --ff-only origin main
-git merge --ff-only dev
-git push origin main
-git switch dev
+# 通过 dev → main 的 Pull Request 合并发布变更
 ```
 
-- 推送 `dev`、创建或更新 PR 均不会触发构建或发布。
-- 合并或推送到 `main`：先检查正式应用入口；两个入口文件均存在后，构建、打包 macOS / Windows / Linux，三端全部成功后发布 GitHub Release。
-- 也可在 GitHub Actions 中选择 `main` 手动运行，同样受入口检查限制；选择其他分支时所有任务跳过。
-- 工作流默认只有 `contents: read`，仅 Release 任务使用 `contents: write`，通过内置 `github.token` 发布，无需额外发布 Secret。
+合并或推送到 `main` 后，流程分两步：
 
-在 Actions 中确认运行标题包含 `push`、`main` 和本次提交 SHA；入口检查、三平台任务与发布任务均成功后，再确认 Release 标签指向该提交，并包含三个安装包。标题中的 `workflow_dispatch` 表示手动运行，只能验证构建与发布，不能作为推送自动触发成功的依据。当前文档不代表已完成三平台验证。
+1. `Prepare version release` 比较这次推送前后的声明版本。版本未变则结束；
+   版本变更且未被使用时，为该提交创建 `v<APP_VERSION>` 标签，例如 `v0.1.0.1`。
+   已有标签指向其他提交、版本倒退或 API 校验失败都会报错，不会强制移动标签。
+2. 标签创建后，用 GitHub 内置凭据显式调用 `Build and release`，运行目标为刚创建的标签。
+   工作流校验标签与源码版本一致、提交属于 `main` 历史、正式应用入口存在，
+   再构建 macOS ARM64 DMG、Windows x64 安装器和 Linux x64 Flatpak。
+   三平台全部通过后创建草稿 Release，上传并校验三个附件，最后公开发布。
 
-GitHub 远端为 `https://github.com/rangerzy/chunfe.git`，默认分支为 `main`。本地 `main`、`dev` 分别跟踪 `origin/main`、`origin/dev`。
+GitHub 内置 `GITHUB_TOKEN` 创建标签不会自动触发另一个 `push` 工作流，
+所以自动流程使用 `workflow_dispatch(ref=标签)`。这仍然是自动发布：无须点击 Run workflow，
+也无须额外配置 PAT、GitHub App 或 Secret。标签准备任务需要 `contents: write` 和
+`actions: write`；构建任务只有 `contents: read`；发布任务使用 `contents: write`。
+仓库或组织若限制这些权限，需要管理员允许相应内置凭据权限。
 
-版本唯一来源为 `CMakeLists.txt` 的 `project(Chunfe VERSION ...)`。Release 标签为 `v<版本>`，标题为 `Chunfe <版本>`。
+`Build and release` 同时支持人工推送 `v*` 标签和手动选择已有版本标签运行。
+手动选择分支运行会在入口校验失败；标签必须精确匹配四段声明版本且对应 `main` 历史中的提交。
+推送 `dev` 或更新 PR 不会触发正式构建/发布；CI 不构建或测试 `examples/`。
 
-**同版本再次发布会更新同一个 Release、替换三平台附件，并将标签移动到最新成功发布的提交。** 需要保留独立版本记录时，先更新 CMake 中的版本号。
+**版本与标签发布后保持不变。** 发布脚本不会创建或移动标签，也不会更新已经公开的 Release、
+替换其附件或重新修改 Latest。新代码需要新版本。失败时可使用以下恢复方式：
 
-发布先进入草稿状态，三个附件上传并通过 SHA-256 校验后公开。发布说明记录提交及工作流信息，同版本旧提交的运行不会覆盖较新的发布，旧版本发布不会回退 Latest 标记，中断后可重跑恢复。
+- 自动打标签成功、启动构建失败：重跑 `Prepare version release`，它确认标签仍对应原提交后继续启动构建。
+- 构建或发布失败：在原运行中选择重跑失败的任务，沿用原标签和提交，不递增版本。
+- 草稿上传中断：重跑后保留校验通过的附件，只补充或替换草稿中的缺失/损坏附件。
+- 版本已经公开：再次执行发布会直接跳过，保持现有版本内容不变。
+
+发布说明记录四段版本、提交和工作流链接，不强制比较重写前的旧提交历史。
+旧 `v0.1.0` Release 与标签保留不变；首次合并这套配置时，旧三段 `0.1.0`
+可迁移为独立四段 `0.1.0.0`，生成新标签 `v0.1.0.0`。新版本按四个数值分段比较，
+较旧版本的重试不会把 Latest 从较新版本移回去。发布任务使用仓库统一队列串行执行，
+最多排队 100 个任务，防止多个版本同时修改 Latest；三平台构建仍可并行。
+
+在 Actions 中确认自动准备任务成功，再确认构建运行标题含 `workflow_dispatch`、版本标签和
+对应提交 SHA；三平台任务与发布任务都成功后，Release 应包含三个同版本安装包。
+这些配置和本地测试不代表已经完成远程三平台构建验证。
+
+macOS 的应用包短版本使用前三段，构建版本使用 `主.次.(补丁×65536+构建)`，
+以满足平台的一至三段元数据格式；公开标签、应用内版本和安装包文件名仍保持四段。
+Windows 安装器版本使用完整四段；Flatpak 的 `stable` 分支与应用版本相互独立。
+
+GitHub 远端为 `https://github.com/rangerzy/chunfe.git`，默认分支为 `main`。
+本地 `main`、`dev` 分别跟踪 `origin/main`、`origin/dev`。
 
 ## 工程结构
 
 ```text
-CMakeLists.txt             # 项目、版本、主应用、共享模块与测试开关
+CMakeLists.txt             # 项目、主应用、共享模块与测试开关
+cmake/AppVersion.cmake     # 手动维护的四段版本唯一来源
 CMakePresets.json          # 三平台 Release 与 Debug 构建预设
 src/CMakeLists.txt        # 统一引入 core、gui、app 三个内部子目录
 src/app/                  # 独立 CMake 管理 Chunfe 目标、启动、组装与安装部署
 src/gui/                  # 独立 CMake 管理 chunfe_gui 静态 QML 模块及界面适配
 src/core/                 # 业务层构建入口及职责说明，实际源码加入后再建库
 modules/text_block/       # 可复用静态 QML 模块与模块 Qt Test
+modules/calendar/         # 可复用日历模块与日期交互、液滴动画测试
 resources/fonts/          # 原始字体、许可证及共享字体加载
 examples/text_block_lab/  # 独立实验室与自身测试
 examples/text_block_consumer/ # 独立接入示例
+examples/calendar_before_today/ # 原日历原型
+examples/calendar_consumer/ # Calendar 模块独立接入示例
 packaging/                # 主应用 DMG、Inno Setup、Flatpak 配置
 scripts/ci/               # Windows / Linux 打包脚本
-.github/workflows/        # main 分支主应用构建与发布，不构建示例
+.github/workflows/        # main 检测版本并打标签，按标签构建与发布
 .github/scripts/          # Release 发布脚本
 tests/                    # 根应用字体 Qt Test 与 Release 离线测试
 ```

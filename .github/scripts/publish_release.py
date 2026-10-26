@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish the three validated Chunfe installers from CI."""
+"""Publish three validated installers for an existing immutable version tag."""
 
 import argparse
 import hashlib
@@ -12,8 +12,13 @@ import sys
 import tempfile
 
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts/ci"))
+from app_version import parse_version, read_version
+
+
 PACKAGE = re.compile(
-    r"chunfe-([0-9]+\.[0-9]+\.[0-9]+)-"
+    r"chunfe-([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)-"
     r"(macos-arm64\.dmg|windows-x64-setup\.exe|linux-x64\.flatpak)")
 PACKAGE_SUFFIXES = {"macos-arm64.dmg", "windows-x64-setup.exe", "linux-x64.flatpak"}
 
@@ -44,7 +49,8 @@ def find_release(repository, tag):
              " repository(owner: $owner, name: $name) { release(tagName: $tag) { databaseId } } }")
     response = api("graphql", "-f", f"query={query}", "-f", f"owner={owner}",
                    "-f", f"name={name}", "-f", f"tag={tag}")
-    if response.get("errors") or not isinstance(response.get("data"), dict):
+    if (not isinstance(response, dict) or response.get("errors")
+            or not isinstance(response.get("data"), dict)):
         raise RuntimeError("GraphQL release lookup failed")
     result = response["data"].get("repository")
     if not isinstance(result, dict) or "release" not in result:
@@ -109,30 +115,54 @@ def commit_details(commit, repository, *, sha=None):
             lines[0] if lines else "(no subject)", author["name"], author["date"])
 
 
-def compare_commits(repository, old_sha, sha):
-    pages = api(f"repos/{repository}/compare/{old_sha}...{sha}?per_page=100",
-                "--paginate", "--slurp")
-    if not isinstance(pages, list) or not pages or any(not isinstance(page, dict) for page in pages):
-        raise RuntimeError("GitHub returned an invalid commit comparison")
-    status = pages[0].get("status")
-    if status not in {"ahead", "identical", "behind", "diverged"}:
-        raise RuntimeError("GitHub returned an invalid comparison status")
-    if status == "diverged":
-        raise RuntimeError("Existing release tag and workflow SHA have diverged")
-    if status == "behind":
-        return status, []
-    commits = [commit for page in pages for commit in page["commits"]]
-    if (any(page.get("status") != status for page in pages)
-            or type(pages[0].get("total_commits")) is not int
-            or len(commits) != pages[0]["total_commits"]):
-        raise RuntimeError("GitHub returned an incomplete commit comparison")
-    return status, commits
+def verify_tag(repository, tag, sha):
+    # An absent tag is an error: this publisher is never allowed to create one.
+    ref = api(f"repos/{repository}/git/ref/tags/{tag}")
+    obj = ref.get("object") if isinstance(ref, dict) else None
+    if (not isinstance(ref, dict) or ref.get("ref") != f"refs/tags/{tag}"
+            or not isinstance(obj, dict) or obj.get("type") not in {"commit", "tag"}
+            or not isinstance(obj.get("sha"), str)
+            or not re.fullmatch(r"[0-9a-fA-F]{40}", obj["sha"])):
+        raise RuntimeError("GitHub returned an unexpected tag ref")
+    # The commits endpoint peels annotated tags; an object's SHA may be a tag object.
+    target = gh("api", f"repos/{repository}/commits/tags/{tag}", "--jq", ".sha").lower()
+    if (target != sha or (obj["type"] == "commit" and obj["sha"].lower() != sha)):
+        raise RuntimeError("Existing tag SHA does not match GITHUB_SHA")
 
 
-def report(tag, release, *, skipped=False):
-    url = release["html_url"] if release else f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/tag/{tag}"
-    heading = "Skipped outdated Chunfe release update" if skipped else "Published Chunfe release"
-    print(f"Skipped outdated workflow: {url}" if skipped else url)
+def validate_release(release, tag, sha, *, release_id=None):
+    if (not isinstance(release, dict) or type(release.get("id")) is not int
+            or release["id"] <= 0 or (release_id is not None and release["id"] != release_id)
+            or release.get("tag_name") != tag or type(release.get("draft")) is not bool
+            or type(release.get("prerelease")) is not bool):
+        raise RuntimeError("GitHub returned an unexpected release identity or state")
+    if release["draft"]:
+        body = release.get("body")
+        markers = re.findall(r"(?m)^<!-- chunfe-release-sha: (.*) -->$", body) if isinstance(body, str) else []
+        if markers != [sha]:
+            raise RuntimeError("Draft release SHA marker does not match GITHUB_SHA")
+
+
+def latest_option(repository, version_parts):
+    latest_flag = "--latest"
+    latest_response = gh("api", f"repos/{repository}/releases/latest", missing=True)
+    if latest_response is not None:
+        latest = json.loads(latest_response)
+        latest_tag = latest.get("tag_name") if isinstance(latest, dict) else None
+        if not isinstance(latest_tag, str) or not latest_tag.startswith("v"):
+            raise RuntimeError("GitHub returned an invalid latest release tag")
+        latest_parts = parse_version(latest_tag[1:], allow_legacy=True)
+        latest_parts += (0,) * (4 - len(latest_parts))
+        if latest_parts > version_parts:
+            latest_flag = "--latest=false"
+
+    return latest_flag
+
+
+def report(tag, release, *, existing=False):
+    url = release["html_url"]
+    heading = "Chunfe release already published; unchanged" if existing else "Published Chunfe release"
+    print(f"Already published; unchanged: {url}" if existing else url)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as stream:
@@ -148,128 +178,95 @@ def publish(directory):
             or len({match[1] for match in matches}) != 1):
         raise RuntimeError(
             "Expected exactly one macOS ARM64 DMG, Windows x64 setup EXE and Linux x64 Flatpak "
-            "with one numeric major.minor.patch version")
-    files = {path.name: path.resolve() for path in paths}
+            "with one numeric major.minor.patch.build version")
     version = matches[0][1]
+    version_parts = parse_version(version)
+    files = {path.name: path.resolve() for path in paths}
     values = {}
     for key, pattern in {
         "GITHUB_REPOSITORY": r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
         "GITHUB_SHA": r"[0-9a-fA-F]{40}",
         "GITHUB_RUN_ID": r"[1-9][0-9]*",
+        "GITHUB_REF_TYPE": r"tag",
+        "GITHUB_REF_NAME": r"v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+",
     }.items():
         values[key] = os.environ.get(key, "")
         if not re.fullmatch(pattern, values[key]):
             raise RuntimeError(f"Missing or invalid {key}")
+    tag = values["GITHUB_REF_NAME"]
+    parse_version(tag[1:])
+    if tag != f"v{version}" or read_version(ROOT) != version:
+        raise RuntimeError("Tag, source version and all three artifact versions must match")
     repository, sha = values["GITHUB_REPOSITORY"], values["GITHUB_SHA"].lower()
-    tag = f"v{version}"
-    commit_endpoint = f"repos/{repository}/commits/tags/{tag}"
+    verify_tag(repository, tag, sha)
     release = find_release(repository, tag)
-    if release and release["tag_name"] != tag:
-        raise RuntimeError("GitHub returned an unexpected release tag")
-    # Only the exact ref endpoint's 404 means absent; commit lookups may return 422.
-    ref = api(f"repos/{repository}/git/ref/tags/{tag}", missing=True)
-    if ref is not None and (not isinstance(ref, dict) or ref.get("ref") != f"refs/tags/{tag}"):
-        raise RuntimeError("GitHub returned an unexpected tag ref")
-    old_sha = gh("api", commit_endpoint, "--jq", ".sha").lower() if ref is not None else None
-    if old_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", old_sha):
-        raise RuntimeError("GitHub returned an invalid tag SHA")
-    changes = []
-    if old_sha is not None and old_sha != sha:
-        status, changes = compare_commits(repository, old_sha, sha)
-        if status == "behind":
-            report(tag, release, skipped=True)
+    if release is not None:
+        validate_release(release, tag, sha)
+        # Successful versions are immutable, including when rebuilt bytes differ.
+        if not release["draft"]:
+            report(tag, release, existing=True)
             return
-    if release and release.get("immutable"):
-        raise RuntimeError("Immutable release cannot be updated")
-    notes_base = old_sha
-    if release and release["draft"]:
-        marker = re.search(r"(?m)^<!-- chunfe-release-base: ([0-9a-f]{40}) -->$", release.get("body") or "")
-        if marker:
-            notes_base = marker[1]
-        if notes_base != old_sha:
-            # The tag may have moved during a failed upload; retain all unpublished changes.
-            status, changes = compare_commits(repository, notes_base, sha)
-            if status == "behind":
-                raise RuntimeError("Draft release base is ahead of the workflow SHA")
+
+    metadata = api(f"repos/{repository}")
+    default_branch = metadata.get("default_branch") if isinstance(metadata, dict) else None
+    if (not isinstance(default_branch, str) or not default_branch
+            or any(character.isspace() for character in default_branch)):
+        raise RuntimeError("GitHub returned an invalid repository default branch")
+    # target_commitish does not move an existing tag. Use the default branch so
+    # GITHUB_TOKEN needs no Workflows permission when retrying an older tag.
+    # The body marker binds a draft to its original SHA independently of this field.
     commit = api(f"repos/{repository}/commits/{sha}")
     link, subject, author, date = commit_details(commit, repository, sha=sha)
-    prefix = (f"Chunfe version: {version}\nCommit: {link}\n"
-              f"Subject: {subject}\nAuthor: {author}\nDate: {date}\n")
-    notes = prefix + f"\nWorkflow run: https://github.com/{repository}/actions/runs/{values['GITHUB_RUN_ID']}\n"
-    if notes_base is not None and notes_base != sha:
-        notes += f"\nChanges: https://github.com/{repository}/compare/{notes_base}...{sha}\n\n"
-        for change in changes:
-            link, subject, author, date = commit_details(change, repository)
-            notes += f"- {link} {subject} — {author}, {date}\n"
-        notes += f"\n<!-- chunfe-release-base: {notes_base} -->\n"
-    elif release and (release.get("body") or "").startswith(prefix):
-        # A failed upload may have already moved the tag; retain its comparison notes.
-        notes = release["body"]
+    notes = (f"Chunfe version: {version}\nCommit: {link}\n"
+             f"Subject: {subject}\nAuthor: {author}\nDate: {date}\n\n"
+             f"Workflow run: https://github.com/{repository}/actions/runs/{values['GITHUB_RUN_ID']}\n\n"
+             f"<!-- chunfe-release-sha: {sha} -->\n")
     if len(notes.encode("utf-8")) > 60000:
         raise RuntimeError("Release notes exceed 60000 UTF-8 bytes")
     title = f"Chunfe {version}"
     present = verify_assets(release, files, repository, complete=False, replace=True) if release else set()
-    if (release and not release["draft"] and not release["prerelease"]
-            and old_sha == sha and present == files.keys()
-            and release.get("name") == title and release.get("body") == notes):
-        report(tag, release)
-        return
-    if release and not release["draft"]:
-        # A new draft starts at the actual published tag, even after a same-SHA rebuild.
-        notes = re.sub(r"(?m)^<!-- chunfe-release-base: [0-9a-f]{40} -->\n?", "", notes).rstrip() + "\n"
-        if old_sha is not None:
-            notes += f"\n<!-- chunfe-release-base: {old_sha} -->\n"
-        if len(notes.encode("utf-8")) > 60000:
-            raise RuntimeError("Release notes exceed 60000 UTF-8 bytes")
-    latest_flag = "--latest"
-    latest_response = gh("api", f"repos/{repository}/releases/latest", missing=True)
-    if latest_response is not None:
-        latest = json.loads(latest_response)
-        latest_tag = latest.get("tag_name") if isinstance(latest, dict) else None
-        latest_version = re.fullmatch(
-            r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)",
-            latest_tag) if isinstance(latest_tag, str) else None
-        if latest_version is None:
-            raise RuntimeError("GitHub returned an invalid latest release tag")
-        if tuple(map(int, latest_version.groups())) > tuple(map(int, version.split("."))):
-            latest_flag = "--latest=false"
-    if old_sha is not None and gh("api", commit_endpoint, "--jq", ".sha").lower() != old_sha:
-        raise RuntimeError("Tag SHA changed before updating the release")
-    if release:
-        release_endpoint = f"repos/{repository}/releases/{release['id']}"
-        fields = ["-f", f"tag_name={tag}", "-f", f"name={title}", "-f", f"body={notes}"]
-        if not release["draft"]:
-            fields += ["-F", "draft=true"]
-        # Persist the baseline and draft state atomically before moving the tag.
-        release = api(release_endpoint, "--method", "PATCH", *fields)
-        if not release["draft"]:
-            raise RuntimeError("Release did not become a draft")
-    if old_sha is None:
-        gh("api", f"repos/{repository}/git/refs", "--method", "POST",
-           "-f", f"ref=refs/tags/{tag}", "-f", f"sha={sha}")
-    elif old_sha != sha:
-        gh("api", f"repos/{repository}/git/refs/tags/{tag}", "--method", "PATCH",
-           "-f", f"sha={sha}", "-F", "force=true")
+    latest_option(repository, version_parts)
+
+    verify_tag(repository, tag, sha)
     if release is None:
         # Consume the creation response: GraphQL/list reads may lag a successful write.
         release = api(f"repos/{repository}/releases", "--method", "POST",
-                      "-f", f"tag_name={tag}", "-f", f"target_commitish={sha}",
+                      "-f", f"tag_name={tag}", "-f", f"target_commitish={default_branch}",
                       "-f", f"name={title}", "-f", f"body={notes}",
                       "-F", "draft=true", "-F", "prerelease=false")
-    release_endpoint = f"repos/{repository}/releases/{release['id']}"
-    if release["tag_name"] != tag or not release["draft"]:
-        raise RuntimeError("GitHub returned an unexpected draft release")
+        validate_release(release, tag, sha)
+    else:
+        release_id = release["id"]
+        release = api(f"repos/{repository}/releases/{release_id}")
+        validate_release(release, tag, sha, release_id=release_id)
+        if not release["draft"]:
+            report(tag, release, existing=True)
+            return
+        release = api(f"repos/{repository}/releases/{release_id}", "--method", "PATCH",
+                      "-f", f"tag_name={tag}", "-f", f"target_commitish={default_branch}",
+                      "-f", f"name={title}", "-f", f"body={notes}")
+        validate_release(release, tag, sha, release_id=release_id)
+    if not release["draft"]:
+        report(tag, release, existing=True)
+        return
+    release_id = release["id"]
+    release_endpoint = f"repos/{repository}/releases/{release_id}"
     missing = [str(path) for name, path in files.items() if name not in present]
     if missing:
         gh("release", "upload", tag, *missing, "--repo", repository, "--clobber")
     release = api(release_endpoint)
+    validate_release(release, tag, sha, release_id=release_id)
+    if not release["draft"]:
+        report(tag, release, existing=True)
+        return
     verify_assets(release, files, repository, complete=True)
-    # Never rely on target_commitish: the actual tag must match the validated packages.
-    if gh("api", commit_endpoint, "--jq", ".sha").lower() != sha:
-        raise RuntimeError("Tag SHA changed before publishing")
+    # Another version may have published while these packages uploaded.
+    latest_flag = latest_option(repository, version_parts)
+    verify_tag(repository, tag, sha)
     gh("release", "edit", tag, "--repo", repository,
        "--draft=false", "--prerelease=false", latest_flag)
     release = api(release_endpoint)
+    validate_release(release, tag, sha, release_id=release_id)
     if release["draft"] or release["prerelease"]:
         raise RuntimeError("Release did not become a published ordinary release")
     report(tag, release)

@@ -3,7 +3,7 @@ run-name: Build and release · ${{ github.event_name }} · ${{ github.ref_name }
 
 on:
   push:
-    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -14,8 +14,7 @@ env:
 
 jobs:
   application:
-    name: Check application entry point
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    name: Check release tag and application entry point
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -24,21 +23,29 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Validate the declared release version and tagged commit
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$GITHUB_REF_TYPE" = tag
+          python3 scripts/ci/app_version.py --check-tag "$RELEASE_TAG"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Test version and release automation
+        run: python3 -B -m unittest discover -s tests -p 'test_*.py'
       - name: Check for the application entry point
         id: entrypoint
         shell: bash
         run: |
-          if [[ -f src/app/main.cpp && -f src/gui/Main.qml ]]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "The application entry point is not present; packaging and release are skipped."
-          fi
+          test -f src/app/main.cpp
+          test -f src/gui/Main.qml
+          echo "available=true" >> "$GITHUB_OUTPUT"
 
   macos:
     name: macOS arm64 DMG
     needs: application
-    if: needs.application.outputs.available == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: needs.application.outputs.available == 'true'
     runs-on: macos-15
     timeout-minutes: 30
     defaults:
@@ -84,7 +91,7 @@ jobs:
   windows:
     name: Windows x64 installer
     needs: application
-    if: needs.application.outputs.available == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: needs.application.outputs.available == 'true'
     runs-on: windows-2025
     timeout-minutes: 30
     defaults:
@@ -149,7 +156,7 @@ jobs:
   linux:
     name: Linux x64 Flatpak
     needs: application
-    if: needs.application.outputs.available == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: needs.application.outputs.available == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:
@@ -159,8 +166,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Test release publishing logic
-        run: python3 -B -m unittest discover -s tests -p test_publish_release.py
       - name: Install Flatpak build and validation tools
         run: |
           sudo apt-get update
@@ -180,14 +185,16 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [application, macos, windows, linux]
-    if: needs.application.outputs.available == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: needs.application.outputs.available == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     concurrency:
-      group: chunfe-release-main
+      # Serialize all publication, including Latest selection, without dropping queued versions.
+      group: chunfe-release-publication
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@v7
         with:

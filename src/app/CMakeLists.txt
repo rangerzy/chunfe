@@ -18,8 +18,8 @@ set_target_properties(Chunfe PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE_GUI_IDENTIFIER io.github.rangerzy.chunfe
     MACOSX_BUNDLE_BUNDLE_NAME Chunfe
-    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${CHUNFE_MACOS_BUNDLE_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${C_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     FOLDER qtc_runnable
 )
@@ -37,6 +37,8 @@ if(APPLE)
     install(SCRIPT ${deploy_script})
 elseif(UNIX)
     # Linux uses the Qt libraries supplied by the KDE Flatpak runtime.
+    install(FILES "${CMAKE_BINARY_DIR}/version.txt"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/chunfe)
     install(FILES ${PROJECT_SOURCE_DIR}/packaging/linux/io.github.rangerzy.chunfe.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES ${PROJECT_SOURCE_DIR}/packaging/linux/io.github.rangerzy.chunfe.svg

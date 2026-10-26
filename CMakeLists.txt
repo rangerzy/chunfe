@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(Chunfe VERSION 0.1.0 LANGUAGES CXX)
+
+include(cmake/AppVersion.cmake)
+
+add_compile_definitions(C_VERSION="${C_VERSION}")
+# 版本号
+project(Chunfe VERSION ${APP_VERSION} LANGUAGES CXX)
+
 
 find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
 qt_standard_project_setup(REQUIRES 6.12)
@@ -10,7 +16,8 @@ include(GNUInstallDirs)
 
 option(CHUNFE_BUILD_TESTS "Build Chunfe application tests" OFF)
 option(TEXT_BLOCK_BUILD_TESTS "Build TextBlock module tests" ${CHUNFE_BUILD_TESTS})
-if(CHUNFE_BUILD_TESTS OR TEXT_BLOCK_BUILD_TESTS)
+option(CALENDAR_BUILD_TESTS "Build Calendar module tests" ${CHUNFE_BUILD_TESTS})
+if(CHUNFE_BUILD_TESTS OR TEXT_BLOCK_BUILD_TESTS OR CALENDAR_BUILD_TESTS)
     enable_testing()
 endif()
 add_subdirectory(modules)
