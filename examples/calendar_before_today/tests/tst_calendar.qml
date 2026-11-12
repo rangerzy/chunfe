@@ -87,7 +87,8 @@ TestCase {
         // Six complete weeks, Sunday first, including both adjacent months.
         verify(day("2026-09-27") !== null)
         verify(day("2026-11-07") !== null)
-        compare(calendar.dataDates.length, 0)
+        compare(calendar.dataDates.length, 1)
+        compare(calendar.dataDates[0], "2026-10-25")
     }
 
     function test_bounds_block_navigation_and_dates() {
@@ -133,7 +134,8 @@ TestCase {
         compare(findChild(calendar, "monthHeading").text, "2026年10月")
         verify(day("2026-10-26").checked)
         compare(notifiedMonths(), [[2026, 9], [2026, 10]])
-        compare(calendar.dataDates.length, 0)
+        compare(calendar.dataDates.length, 1)
+        compare(calendar.dataDates[0], "2026-10-25")
         wait(0)
         compare(monthSpy.count, 2)
     }
@@ -369,7 +371,8 @@ TestCase {
         calendar.monthChanged.disconnect(handler)
         compare(calendar.displayedMonth, 10)
         compare(notifiedMonths(), [[2026, 9], [2026, 10]])
-        compare(calendar.dataDates.length, 0)
+        compare(calendar.dataDates.length, 1)
+        compare(calendar.dataDates[0], "2026-10-25")
         wait(0)
         compare(monthSpy.count, 2)
     }

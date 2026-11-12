@@ -1,26 +1,32 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 4.3.6)
 
+set(CMAKE_AUTOMOC ON) # 自动处理 MOC 宏（如 Q_OBJECT）
+set(CMAKE_AUTOUIC ON) # 自动处理 .ui 界面文件
+set(CMAKE_AUTORCC ON) # 自动处理 .qrc 资源文件
 
 include(cmake/AppVersion.cmake)
+project(Chunfe VERSION ${APP_VERSION} LANGUAGES C CXX)
+if(APPLE)
+    # The macOS app and audio plugin both compile Objective-C++ sources.
+    enable_language(OBJCXX)
+endif()
 
-add_compile_definitions(C_VERSION="${C_VERSION}")
-# 版本号
-project(Chunfe VERSION ${APP_VERSION} LANGUAGES CXX)
-
-
-find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
-qt_standard_project_setup(REQUIRES 6.12)
+find_package(Qt6 6.12 REQUIRED COMPONENTS Core Quick QuickControls2)
+qt_standard_project_setup(REQUIRES 6.12 I18N_SOURCE_LANGUAGE zh-Hans I18N_TRANSLATED_LANGUAGES en)
 include(cmake/ChunfeQmlTooling.cmake)
 chunfe_setup_qml_tooling()
 include(GNUInstallDirs)
 
 option(CHUNFE_BUILD_TESTS "Build Chunfe application tests" OFF)
+option(CHUNFE_LOG_BUILD_TESTS "Build Chunfe logging tests" ${CHUNFE_BUILD_TESTS})
 option(TEXT_BLOCK_BUILD_TESTS "Build TextBlock module tests" ${CHUNFE_BUILD_TESTS})
 option(CALENDAR_BUILD_TESTS "Build Calendar module tests" ${CHUNFE_BUILD_TESTS})
-if(CHUNFE_BUILD_TESTS OR TEXT_BLOCK_BUILD_TESTS OR CALENDAR_BUILD_TESTS)
+if(CHUNFE_BUILD_TESTS OR CHUNFE_LOG_BUILD_TESTS OR TEXT_BLOCK_BUILD_TESTS OR CALENDAR_BUILD_TESTS)
     enable_testing()
 endif()
+add_subdirectory(3party/miniaudio)
 add_subdirectory(modules)
+add_subdirectory(plugins/AudioPipline)
 add_subdirectory(resources/fonts)
 add_subdirectory(src)
 

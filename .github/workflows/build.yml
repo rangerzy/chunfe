@@ -11,6 +11,7 @@ permissions:
 
 env:
   QT_VERSION: "6.12.0"
+  CMAKE_VERSION: "4.3.6"
 
 jobs:
   application:
@@ -32,8 +33,14 @@ jobs:
           test "$GITHUB_REF_TYPE" = tag
           python3 scripts/ci/app_version.py --check-tag "$RELEASE_TAG"
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Install pinned CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: ${{ env.CMAKE_VERSION }}
       - name: Test version and release automation
-        run: python3 -B -m unittest discover -s tests -p 'test_*.py'
+        run: |
+          test "$(cmake --version | head -n 1)" = "cmake version $CMAKE_VERSION"
+          python3 -B -m unittest discover -s tests -p 'test_*.py'
       - name: Check for the application entry point
         id: entrypoint
         shell: bash
@@ -63,18 +70,25 @@ jobs:
           target: desktop
           # Qt's clang_64 package contains both Intel and Apple Silicon slices.
           arch: clang_64
+          modules: qtmultimedia
           cache: true
+      - name: Install pinned CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: ${{ env.CMAKE_VERSION }}
       - name: Record and verify toolchain
         run: |
           test "$(uname -m)" = arm64
           test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
           xcodebuild -version
           xcrun clang++ --version
+          test "$(cmake --version | head -n 1)" = "cmake version $CMAKE_VERSION"
           cmake --version
           ninja --version
       - name: Configure and build
         run: |
           cmake --preset macos-arm64-release \
+            -DCMAKE_C_COMPILER="$(xcrun --find clang)" \
             -DCMAKE_CXX_COMPILER="$(xcrun --find clang++)" \
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
           cmake --build --preset macos-arm64-release --parallel 3
@@ -108,12 +122,17 @@ jobs:
           host: windows
           target: desktop
           arch: win64_mingw
+          modules: qtmultimedia
           # aqt 3.3.0 cannot resolve the Windows Qt 6.11+ repository layout.
           # Pin the upstream fix until it is included in a stable aqt release.
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@7e5a5c3d95cf962cfc2f36c86ffa0d2c07f1a0d4
           # The published Qt 6.12.0 MinGW SDK declares this compiler dependency.
           tools: tools_mingw1310,qt.tools.win64_mingw1310
           cache: true
+      - name: Install pinned CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: ${{ env.CMAKE_VERSION }}
       - name: Select and verify the Qt MinGW toolchain
         run: |
           $ErrorActionPreference = "Stop"
@@ -136,12 +155,15 @@ jobs:
           "CHUNFE_MINGW_BIN=$mingwBin" >> $env:GITHUB_ENV
           $mingwBin >> $env:GITHUB_PATH
           & $compiler --version
+          if ((cmake --version | Select-Object -First 1) -ne "cmake version $env:CMAKE_VERSION") {
+            throw "Unexpected CMake version"
+          }
           cmake --version
           ninja --version
       - name: Configure and build
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          cmake --preset windows-x64-release "-DCMAKE_CXX_COMPILER=$env:CHUNFE_MINGW_BIN/g++.exe" "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
+          cmake --preset windows-x64-release "-DCMAKE_C_COMPILER=$env:CHUNFE_MINGW_BIN/gcc.exe" "-DCMAKE_CXX_COMPILER=$env:CHUNFE_MINGW_BIN/g++.exe" "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
           cmake --build --preset windows-x64-release --parallel 3
       - name: Deploy Qt, build installer and verify installed files
         run: ./scripts/ci/package-windows.ps1

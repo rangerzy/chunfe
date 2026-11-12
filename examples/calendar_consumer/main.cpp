@@ -1,3 +1,5 @@
+#include "cf_log.h"
+
 #include <QCommandLineParser>
 #include <QGuiApplication>
 #include <QImage>
@@ -13,6 +15,7 @@ Q_IMPORT_QML_PLUGIN(CalendarPlugin)
 
 int main(int argc, char *argv[])
 {
+    CfLog::initialize();
     // Glyph rendering is an application policy, independent of Calendar.
     if (!qEnvironmentVariableIsSet("QSG_DISTANCEFIELD_ANTIALIASING"))
         qputenv("QSG_DISTANCEFIELD_ANTIALIASING", "gray");
@@ -50,7 +53,7 @@ int main(int argc, char *argv[])
         QTimer::singleShot(500, &app, [window, path] {
             const QImage image = window->grabWindow();
             if (image.isNull() || !image.save(path, "PNG")) {
-                qWarning("Could not save the example screenshot");
+                WARNING_CF_LOG() << "Could not save the example screenshot";
                 QCoreApplication::exit(1);
                 return;
             }

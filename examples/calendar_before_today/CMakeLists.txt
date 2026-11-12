@@ -1,12 +1,22 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 4.3.6)
 
 project(calendar_before_today VERSION 0.1 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+include(GNUInstallDirs)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2)
+find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
 
 qt_standard_project_setup(REQUIRES 6.12)
+if(NOT TARGET chunfe_log)
+    get_filename_component(_default_log_source
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../modules/logging" ABSOLUTE)
+    set(CHUNFE_LOG_SOURCE_DIR "${_default_log_source}" CACHE PATH
+        "Path to the Chunfe logging module source directory")
+    if(NOT EXISTS "${CHUNFE_LOG_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "Set CHUNFE_LOG_SOURCE_DIR to the path of modules/logging")
+    endif()
+    add_subdirectory("${CHUNFE_LOG_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/logging")
+endif()
 
 # Content of downloaded design from Figma to Qt or similar
 if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/importedcontent/CMakeLists.txt")
@@ -31,6 +41,8 @@ endif()
 qt_add_executable(appcalendar_before_today
     main.cpp
 )
+cf_log_configure_target(appcalendar_before_today calendar_before_today)
+target_compile_features(appcalendar_before_today PRIVATE cxx_std_23)
 
 qt_add_qml_module(appcalendar_before_today
     URI calendar_before_today
@@ -40,11 +52,7 @@ qt_add_qml_module(appcalendar_before_today
         LiquidSelection.qml
 )
 
-# Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
-# If you are developing for iOS or macOS you should consider setting an
-# explicit, fixed bundle identifier manually though.
 set_target_properties(appcalendar_before_today PROPERTIES
-#    MACOSX_BUNDLE_GUI_IDENTIFIER com.example.appcalendar_before_today
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
@@ -54,12 +62,15 @@ set_target_properties(appcalendar_before_today PROPERTIES
 target_link_libraries(appcalendar_before_today
     PRIVATE Qt6::Quick
     Qt6::QuickControls2
-    chunfe_fonts
 )
+if(CHUNFE_FONTS_SOURCE_DIR)
+    target_link_libraries(appcalendar_before_today PRIVATE chunfe_fonts)
+    target_compile_definitions(appcalendar_before_today PRIVATE CALENDAR_PROJECT_FONTS)
+endif()
 
 option(CALENDAR_BUILD_TESTS "Enable calendar interaction tests" OFF)
 if(CALENDAR_BUILD_TESTS)
-    find_package(Qt6 REQUIRED COMPONENTS QuickTest)
+    find_package(Qt6 6.12 REQUIRED COMPONENTS QuickTest)
     enable_testing()
     add_test(NAME calendar_interactions
         COMMAND Qt6::qmltestrunner -input "${CMAKE_CURRENT_SOURCE_DIR}/tests")

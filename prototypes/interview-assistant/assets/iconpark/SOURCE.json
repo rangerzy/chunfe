@@ -1,0 +1,174 @@
+{
+  "package": "@icon-park/svg",
+  "version": "1.4.2",
+  "website": "https://iconpark.oceanengine.com/official",
+  "repository": "https://github.com/bytedance/IconPark",
+  "gitHead": "bed2e8d1e451ffc66cbc4def3ba54fcc1f318d9e",
+  "archive": "https://registry.npmjs.org/@icon-park/svg/-/svg-1.4.2.tgz",
+  "archiveSha256": "fbd548c2d6c3830a56828c9cf09787d61ce2a74a4f398919059e111de17c504b",
+  "configuration": {
+    "theme": "outline",
+    "size": 48,
+    "strokeWidth": 4,
+    "strokeLinecap": "round",
+    "strokeLinejoin": "round",
+    "fill": "#18181b"
+  },
+  "icons": {
+    "home": {
+      "icon": "Home",
+      "source": "lib/icons/Home.js",
+      "sha256": "c9349008d2953658f8e4bdc2d6fbdaafea5c665dd25a8d1b592a7dde87087bc6"
+    },
+    "history": {
+      "icon": "History",
+      "source": "lib/icons/History.js",
+      "sha256": "74a8e131acbcee96f575cdcd4c3ed285aaed9cfcf8229350a11cdc733669bb59"
+    },
+    "user": {
+      "icon": "User",
+      "source": "lib/icons/User.js",
+      "sha256": "0234e07057691f95e499301529bf63cba31e917ff875264dd7c9dc8fd9b00200"
+    },
+    "model": {
+      "icon": "Cpu",
+      "source": "lib/icons/Cpu.js",
+      "sha256": "7ea6abb7a8180d95df322ff0f1f272afbebf8b33e0e08ebac7a8f76ad768ff26"
+    },
+    "audio": {
+      "icon": "SoundWave",
+      "source": "lib/icons/SoundWave.js",
+      "sha256": "35c23a321244246357a701ab513f879a39267bb4710b0f5cf2e2be35722c2da3"
+    },
+    "arrow-right": {
+      "icon": "ArrowRight",
+      "source": "lib/icons/ArrowRight.js",
+      "sha256": "14a94c594efd71bb7c6ac0ab9e59877da6a790f33617b6f19e940091d75b616e"
+    },
+    "plus": {
+      "icon": "Plus",
+      "source": "lib/icons/Plus.js",
+      "sha256": "add02da5bdd3295c90c8115e05041a67fbbf986efe291c17dea79b2d1e9ef2ca"
+    },
+    "check": {
+      "icon": "Check",
+      "source": "lib/icons/Check.js",
+      "sha256": "8191225263c56fedb0b39c5786576b034f6b4c9ecf58caf775451e2e69ef447e"
+    },
+    "close": {
+      "icon": "Close",
+      "source": "lib/icons/Close.js",
+      "sha256": "a8af2eb8e4f2d1f6ea903dbc8f71c879f5f265de04711efd9112878231309f21"
+    },
+    "chevron-left": {
+      "icon": "Left",
+      "source": "lib/icons/Left.js",
+      "sha256": "f0d98df6685cec71b0dc463512778aa72338d3b796f7051706c3d121a06427ff"
+    },
+    "chevron-right": {
+      "icon": "Right",
+      "source": "lib/icons/Right.js",
+      "sha256": "aed255335365a8f18bbfd86ead575556a444d163c8f13fd5193f651ad79bac74"
+    },
+    "search": {
+      "icon": "Search",
+      "source": "lib/icons/Search.js",
+      "sha256": "878a02b19c09e18c15196e0b1761c767648d5f8485f73b04d11815bbac31e6a3"
+    },
+    "file": {
+      "icon": "FileText",
+      "source": "lib/icons/FileText.js",
+      "sha256": "b4ef108c06f11db2479a85666eb90eef1d72c7e05e1e2adf7a15e634a04f113a"
+    },
+    "upload": {
+      "icon": "UploadOne",
+      "source": "lib/icons/UploadOne.js",
+      "sha256": "b59b7609cf4850a8e7d9da45804fcc7d3f5d767f60601564b01610c732d32cab"
+    },
+    "download": {
+      "icon": "Download",
+      "source": "lib/icons/Download.js",
+      "sha256": "69d9330af1d7cdbcfa76f1d6635212ad862feed92782b3a852075a9efbb65133"
+    },
+    "trash": {
+      "icon": "Delete",
+      "source": "lib/icons/Delete.js",
+      "sha256": "ba1d03df04e6e9923f0a48a8af6b551aa8039dd58fa06af76a3e9ac9b6d695ae"
+    },
+    "edit": {
+      "icon": "Edit",
+      "source": "lib/icons/Edit.js",
+      "sha256": "1124e2e0517c04f737ad95b0e409573868b89ddd28c70230c0ec995cd364bce7"
+    },
+    "play": {
+      "icon": "PlayOne",
+      "source": "lib/icons/PlayOne.js",
+      "sha256": "97ce1a55b4ce6417963d28a99ecb9fec4be978a8f0ecc76d5b3892db6e8d6cf5"
+    },
+    "pause": {
+      "icon": "Pause",
+      "source": "lib/icons/Pause.js",
+      "sha256": "2b2c495028331f4a0b6ac354db4f613724a534930d58f92cc9690c0a859f5a44"
+    },
+    "stop": {
+      "icon": "Square",
+      "source": "lib/icons/Square.js",
+      "sha256": "448ec824be7e56cc3e67ffc379a9609080f72205fe19765d117fe19b8159959f"
+    },
+    "collapse": {
+      "icon": "Up",
+      "source": "lib/icons/Up.js",
+      "sha256": "6270675d2f96188be29777bae2179960e40a9b2cee2c7206b93517b744e710db"
+    },
+    "expand": {
+      "icon": "Down",
+      "source": "lib/icons/Down.js",
+      "sha256": "3f6d277818153c2ed274b83dc20980a7f249a218c2c52f7768ff0d54b91f053a"
+    },
+    "grip": {
+      "icon": "Drag",
+      "source": "lib/icons/Drag.js",
+      "sha256": "44b56e2eb44562b1b969eb3e25f7fa06728b316ba09ad2398be2ca6dbffbaa13"
+    },
+    "clock": {
+      "icon": "Time",
+      "source": "lib/icons/Time.js",
+      "sha256": "2fec19903b15aaad3ee18c656b4124d8c169cbf46282b5701166ec749bd61302"
+    },
+    "headphones": {
+      "icon": "Headset",
+      "source": "lib/icons/Headset.js",
+      "sha256": "7f791e3232cb2f01b3e20a1cfb122ecca757e48575076a27c19e71ad69740ff6"
+    },
+    "mic": {
+      "icon": "Voice",
+      "source": "lib/icons/Voice.js",
+      "sha256": "7c4db625d24e6730e81fc23d2943cd334691fe61e7b7938f89218079d6f3c6b6"
+    },
+    "settings": {
+      "icon": "SettingConfig",
+      "source": "lib/icons/SettingConfig.js",
+      "sha256": "dd1cddf00e62e20d2ee6fd6fa040495575373f70cdea0f8a2547b1e684971cae"
+    },
+    "alert": {
+      "icon": "Attention",
+      "source": "lib/icons/Attention.js",
+      "sha256": "0b900533600a122b3933d0bc74ee38b81ba3e13ab705c64218c080a46837ca57"
+    },
+    "eye": {
+      "icon": "PreviewOpen",
+      "source": "lib/icons/PreviewOpen.js",
+      "sha256": "3aaa64097ccc1188551d3214ec094c38580918ad93a02c61b5c42fa2a06c7171"
+    },
+    "bolt": {
+      "icon": "Lightning",
+      "source": "lib/icons/Lightning.js",
+      "sha256": "355a66ebcf0514a2bea7deef6b1d695baa7ddf6fb05ebf7a046262f5f05d19ee"
+    },
+    "info": {
+      "icon": "Info",
+      "source": "lib/icons/Info.js",
+      "sha256": "04a0476bc403cf26654559bf4e4ff9cb8867cf6a6e3cd5cda34c2d43d74c35f9"
+    }
+  }
+}

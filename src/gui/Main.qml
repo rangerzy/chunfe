@@ -1,51 +1,134 @@
+pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
+import Chunfe.Ui
+import Chunfe.Transcript
+import Chunfe.Answer
+import "mock"
+import "pages"
+import "shell"
 
 ApplicationWindow {
     id: window
-    required property string fontLicenseText
+    objectName: "mainWindow"
+    property var audioDevices: null
+    property var audioLevelTest: null
+    readonly property alias demoController: demo
+    readonly property alias transcriptVisible: transcriptWindow.visible
+    readonly property alias answerVisible: answerWindow.visible
 
-    width: 960
-    height: 640
-    minimumWidth: 640
-    minimumHeight: 480
-    visible: true
+    width: 820
+    height: 560
+    minimumWidth: 760
+    minimumHeight: 520
+    visible: !demo.interviewActive
     title: qsTr("春风")
+    color: Theme.background
+    font.pixelSize: 14
+    onClosing: { demo.transcriptionTest.close(); demo.cancelChecks(); Qt.quit() }
 
-    Label {
-        anchors.centerIn: parent
-        text: qsTr("春风")
-        font.pixelSize: 28
+    function positionInterviewWindows() {
+        const available = Qt.rect(window.screen.virtualX, window.screen.virtualY, window.screen.width, window.screen.height)
+        transcriptWindow.width = Math.round(Math.min(480, (available.width - 72) * 0.54))
+        answerWindow.width = Math.min(400, available.width - transcriptWindow.width - 72)
+        const startX = Math.round(available.x + Math.max(24, (available.width - transcriptWindow.width - answerWindow.width - 24) / 2))
+        const startY = Math.round(available.y + Math.min(100, Math.max(40, (available.height - answerWindow.height) / 3)))
+        transcriptWindow.x = startX; transcriptWindow.y = startY
+        answerWindow.x = startX + transcriptWindow.width + 24; answerWindow.y = startY
     }
 
-    footer: ToolBar {
-        ToolButton {
-            text: qsTr("本应用使用 OPPO Sans 字体 · 字体许可")
-            onClicked: fontLicenseDialog.open()
+    DemoController {
+        id: demo
+        onInterviewStarted: window.positionInterviewWindows()
+        onInterviewFinished: { window.show(); window.raise(); window.requestActivate() }
+        onNotification: function(message) { toastLabel.text = message; toast.visible = true; toastTimer.restart() }
+        onPreflightVisibleChanged: { if (preflightVisible) checks.open(); else checks.close() }
+    }
+
+    Sidebar {
+        id: rail
+        objectName: "sidebar"
+        width: 64; height: parent.height; z: 10
+        controller: demo
+    }
+    Loader {
+        id: pageLoader
+        objectName: "pageLoader"
+        anchors.left: rail.right; anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
+        sourceComponent: ({
+            home: homePage,
+            background: backgroundPage,
+            model: modelPage,
+            audio: audioPage,
+            history: historyPage,
+            record: recordPage,
+            about: aboutPage
+        })[demo.route] || homePage
+    }
+    Component { id: homePage; HomePage { controller: demo } }
+    Component { id: backgroundPage; BackgroundPage { controller: demo } }
+    Component { id: modelPage; ModelPage { controller: demo } }
+    Component { id: audioPage; AudioPage { controller: demo; audioDevices: window.audioDevices; audioLevelTest: window.audioLevelTest } }
+    Component { id: historyPage; HistoryPage { controller: demo } }
+    Component { id: recordPage; RecordPage { controller: demo } }
+    Component { id: aboutPage; AboutPage {} }
+
+    PreflightDialog { id: checks; objectName: "preflightDialog"; anchors.centerIn: Overlay.overlay; controller: demo }
+    TranscriptionTestDialog { anchors.centerIn: Overlay.overlay; controller: demo.transcriptionTest }
+
+    Rectangle {
+        id: toast
+        visible: false; z: 30
+        anchors.horizontalCenter: pageLoader.horizontalCenter
+        anchors.bottom: parent.bottom; anchors.bottomMargin: 18
+        width: Math.min(toastLabel.implicitWidth + 40, pageLoader.width - 48)
+        height: toastLabel.implicitHeight + 26
+        color: "#18181b"; radius: 8
+        Text { id: toastLabel; x: 20; y: 13; width: parent.width - 40; color: "#fafafa"; font.pixelSize: 12; wrapMode: Text.Wrap }
+    }
+    Timer { id: toastTimer; interval: 3600; onTriggered: toast.visible = false }
+
+    Window {
+        id: transcriptWindow
+        objectName: "transcriptWindow"
+        transientParent: null
+        title: qsTr("春风 · 实时对话")
+        // Cocoa Tool panels hide when another app becomes active. A regular
+        // top-level window keeps these dialogue hints visible on macOS.
+        flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool) | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        color: "transparent"
+        width: Math.min(480, screen.width - 40)
+        height: transcriptPanel.implicitHeight
+        visible: demo.interviewActive
+        onClosing: function(close) { close.accepted = false; demo.finishInterview() }
+        TranscriptPanel {
+            id: transcriptPanel
+            anchors.fill: parent
+            messages: demo.messages; paused: demo.paused; collapsed: demo.transcriptCollapsed; elapsedText: demo.elapsedText
+            logoSource: "qrc:/branding/chunfe-mark.svg"
+            onPauseRequested: demo.togglePause()
+            onCollapseRequested: demo.transcriptCollapsed = !demo.transcriptCollapsed
+            onFinishRequested: demo.finishInterview()
+            onDragRequested: transcriptWindow.startSystemMove()
         }
     }
-
-    Dialog {
-        id: fontLicenseDialog
-        anchors.centerIn: parent
-        width: Math.min(window.width - 48, 720)
-        height: Math.min(window.height - 48, 520)
-        modal: true
-        title: qsTr("字体许可")
-        standardButtons: Dialog.Close
-
-        contentItem: ScrollView {
-            id: licenseScroll
-            clip: true
-            contentWidth: availableWidth
-
-            TextArea {
-                width: licenseScroll.availableWidth
-                text: window.fontLicenseText
-                readOnly: true
-                wrapMode: TextEdit.Wrap
-                textFormat: TextEdit.PlainText
-            }
+    Window {
+        id: answerWindow
+        objectName: "answerWindow"
+        transientParent: null
+        title: qsTr("春风 · 回应建议")
+        flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool) | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        color: "transparent"
+        width: Math.min(400, screen.width - 40)
+        height: answerPanel.implicitHeight
+        visible: demo.interviewActive
+        onClosing: function(close) { close.accepted = false; demo.finishInterview() }
+        AnswerPanel {
+            id: answerPanel
+            anchors.fill: parent
+            question: demo.question; triggerKind: demo.triggerKind; answer: demo.answer; generating: demo.generating; pendingQuestion: demo.pendingQuestion; collapsed: demo.answerCollapsed
+            onCollapseRequested: demo.answerCollapsed = !demo.answerCollapsed
+            onDragRequested: answerWindow.startSystemMove()
         }
     }
 }

@@ -44,8 +44,13 @@ test "$(lipo -archs "$app/Contents/MacOS/Chunfe")" = arm64
 # macdeployqt for their runtime dependencies. A direct -qmldir deployment also
 # recursively copies unrelated modules nested below QtQuick.
 test -d "$app/Contents/Frameworks/QtCore.framework"
+test -d "$app/Contents/Frameworks/QtMultimedia.framework"
 test -f "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
+test -f "$app/Contents/PlugIns/imageformats/libqsvg.dylib"
+test -d "$app/Contents/PlugIns/multimedia"
+test -n "$(find "$app/Contents/PlugIns/multimedia" -type f -name '*.dylib' -print -quit)"
 test -f "$app/Contents/Resources/qml/QtQuick/qmldir"
+cmp -s "$source_dir/src/app/qt-macos.conf" "$app/Contents/Resources/qt.conf"
 
 # Framework copies can carry Finder metadata, which codesign rejects. Clean the
 # staged bundle only, then sign its nested code before signing the app itself.
@@ -75,7 +80,15 @@ codesign --verify --deep --strict "$test_dir/installed/Chunfe.app"
 # Validate the copied application and its deployed runtime without changing the
 # application entry point. Automated startup testing is not configured yet.
 test -x "$test_dir/installed/Chunfe.app/Contents/MacOS/Chunfe"
+icon_file="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$test_dir/installed/Chunfe.app/Contents/Info.plist")"
+test "$icon_file" = chunfe-app.icns
+cmp "$source_dir/resources/branding/chunfe-app.icns" "$test_dir/installed/Chunfe.app/Contents/Resources/$icon_file"
 test -d "$test_dir/installed/Chunfe.app/Contents/Frameworks/QtCore.framework"
+test -d "$test_dir/installed/Chunfe.app/Contents/Frameworks/QtMultimedia.framework"
 test -f "$test_dir/installed/Chunfe.app/Contents/PlugIns/platforms/libqcocoa.dylib"
+test -f "$test_dir/installed/Chunfe.app/Contents/PlugIns/imageformats/libqsvg.dylib"
+test -d "$test_dir/installed/Chunfe.app/Contents/PlugIns/multimedia"
+test -n "$(find "$test_dir/installed/Chunfe.app/Contents/PlugIns/multimedia" -type f -name '*.dylib' -print -quit)"
 test -f "$test_dir/installed/Chunfe.app/Contents/Resources/qml/QtQuick/qmldir"
+cmp -s "$source_dir/src/app/qt-macos.conf" "$test_dir/installed/Chunfe.app/Contents/Resources/qt.conf"
 echo "Verified disk image and deployed files: $dmg"

@@ -1,6 +1,6 @@
 # Calendar 独立接入示例
 
-这个独立的 Qt 6.12 / CMake 3.24 项目通过 `import Calendar` 使用 `PastDateCalendar`，不依赖 Chunfe 应用代码。仓库根项目不会构建此示例。
+这个独立的 Qt 6.12 / CMake 4.3.6+ 项目通过 `import Calendar` 使用 `PastDateCalendar`，不依赖 Chunfe 应用代码。仓库根项目和正式发布工作流不会构建此示例；独立检查工作流会构建并运行其可用测试。
 
 在仓库根目录运行：
 
@@ -21,6 +21,7 @@ cmake --build build/calendar-consumer
 cmake -S /path/to/calendar_consumer -B /path/to/consumer-build -G Ninja \
   -DCMAKE_PREFIX_PATH=/path/to/Qt/6.12/macos \
   -DCALENDAR_SOURCE_DIR=/path/to/modules/calendar \
+  -DCHUNFE_LOG_SOURCE_DIR=/path/to/modules/logging \
   -DCHUNFE_FONTS_SOURCE_DIR=
 cmake --build /path/to/consumer-build
 /path/to/consumer-build/calendar_consumer
@@ -28,7 +29,7 @@ cmake --build /path/to/consumer-build
 
 接入自己的应用时，在 CMake 中通过 `add_subdirectory` 引入模块并链接 `calendar`、`calendarplugin`；在 C++ 入口添加 `Q_IMPORT_QML_PLUGIN(CalendarPlugin)`；在 QML 中 `import Calendar` 后即可使用 `PastDateCalendar`。年月参数中的月份使用 1–12，`dataDates` 使用本地日期的 `yyyy-MM-dd` 字符串。响应 `dateSelected(date)` 可处理用户选择，也可以绑定 `selectedDate` 展示当前选择。
 
-仓库字体资源存在时会默认启用，窗口底部提供字体许可入口。`CHUNFE_FONTS_SOURCE_DIR` 可指定其他兼容的字体资源目录；传入空值时使用系统字体，此时只需 Qt 和 Calendar 模块源码。QML 编辑器配置优先使用仓库的 `ChunfeQmlTooling.cmake`，复制到其他目录后会自动使用独立配置。
+仓库字体资源存在时会默认启用，窗口底部提供字体许可入口。`CHUNFE_FONTS_SOURCE_DIR` 可指定其他兼容的字体资源目录；传入空值时使用系统字体。示例仍需 Qt、Calendar 和日志模块源码；`CHUNFE_LOG_SOURCE_DIR` 可指定日志模块的位置。Calendar 本身不依赖日志模块。QML 编辑器配置优先使用仓库的 `ChunfeQmlTooling.cmake`，复制到其他目录后会自动使用独立配置。
 
 启用模块测试：
 

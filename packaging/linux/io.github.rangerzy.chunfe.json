@@ -10,9 +10,33 @@
     "--share=ipc",
     "--socket=fallback-x11",
     "--socket=wayland",
+    "--socket=pulseaudio",
     "--device=dri"
   ],
   "modules": [
+    {
+      "name": "cmake-build-tool",
+      "buildsystem": "simple",
+      "only-arches": [
+        "x86_64"
+      ],
+      "build-commands": [
+        "mkdir -p /app/bin /app/share",
+        "cp -a bin/. /app/bin/",
+        "cp -a share/. /app/share/",
+        "test \"$(/app/bin/cmake --version | head -n 1)\" = \"cmake version 4.3.6\""
+      ],
+      "cleanup": [
+        "*"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/Kitware/CMake/releases/download/v4.3.6/cmake-4.3.6-linux-x86_64.tar.gz",
+          "sha256": "fba967b44c7b40f155f9492dacb5477aab8333699986e1e07a7d90803aba7219"
+        }
+      ]
+    },
     {
       "name": "chunfe",
       "buildsystem": "cmake-ninja",
@@ -31,6 +55,14 @@
             "dist"
           ]
         }
+      ],
+      "build-options": {
+        "prepend-path": "/app/bin"
+      },
+      "build-commands": [
+        "test \"$(command -v cmake)\" = /app/bin/cmake",
+        "test \"$(cmake --version | head -n 1)\" = \"cmake version 4.3.6\"",
+        "grep -Fx 'CMAKE_COMMAND:INTERNAL=/app/bin/cmake' CMakeCache.txt"
       ]
     }
   ]

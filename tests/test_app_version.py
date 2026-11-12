@@ -134,8 +134,9 @@ class CMakeVersionTests(unittest.TestCase):
     def test_application_target_exports_full_version_and_three_part_apple_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
+            (source / "audio.cpp").write_text("void audio_probe() {}\n")
             (source / "CMakeLists.txt").write_text(f"""
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 4.3.6)
 set(VERSION_MAJOR 2)
 set(VERSION_MINOR 3)
 set(VERSION_PATCH 4)
@@ -144,8 +145,13 @@ include("{ROOT / 'cmake/AppVersion.cmake'}")
 project(VersionProbe VERSION ${{APP_VERSION}} LANGUAGES CXX)
 set(CMAKE_INSTALL_BINDIR bin)
 set(CMAKE_INSTALL_DATADIR share)
+set(CMAKE_INSTALL_LIBDIR lib)
 function(qt_add_executable name)
     add_executable(${{name}} EXCLUDE_FROM_ALL ${{ARGN}})
+endfunction()
+function(cf_log_configure_target target category)
+endfunction()
+function(find_package package)
 endfunction()
 function(qt_generate_deploy_qml_app_script)
     file(WRITE "${{CMAKE_BINARY_DIR}}/deploy.cmake" "")
@@ -153,7 +159,10 @@ function(qt_generate_deploy_qml_app_script)
 endfunction()
 add_library(chunfe_gui INTERFACE)
 set_property(TARGET chunfe_gui PROPERTY QT_QML_MODULE_QML_FILES "")
-foreach(name Qt6::Quick Qt6::QuickControls2 chunfe_fonts chunfe_guiplugin)
+add_library(audio_pipline SHARED "${{CMAKE_CURRENT_SOURCE_DIR}}/audio.cpp")
+add_library(Qt6::QSvgPlugin MODULE IMPORTED)
+set_target_properties(Qt6::QSvgPlugin PROPERTIES IMPORTED_LOCATION "${{CMAKE_CURRENT_SOURCE_DIR}}/libqsvg.dylib")
+foreach(name Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia chunfe_fonts chunfe_guiplugin)
     add_library(${{name}} INTERFACE IMPORTED)
 endforeach()
 add_subdirectory("{ROOT / 'src/app'}" app)
@@ -170,8 +179,9 @@ file(GENERATE OUTPUT "${{CMAKE_BINARY_DIR}}/target-version.txt" CONTENT "$<TARGE
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
             (source / "probe.cpp").write_text("int main() { return 0; }\n")
+            (source / "audio.cpp").write_text("void audio_probe() {}\n")
             (source / "CMakeLists.txt").write_text(f"""
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 4.3.6)
 project(VersionInstallProbe VERSION 2.3.4.5 LANGUAGES CXX)
 # Exercise the Linux installation branch even on a macOS development host.
 set(APPLE FALSE)
@@ -179,12 +189,18 @@ set(UNIX TRUE)
 set(PROJECT_SOURCE_DIR "{ROOT}")
 set(CMAKE_INSTALL_BINDIR bin)
 set(CMAKE_INSTALL_DATADIR share)
+set(CMAKE_INSTALL_LIBDIR lib)
 function(qt_add_executable name)
     add_executable(${{name}} "${{CMAKE_CURRENT_FUNCTION_LIST_DIR}}/probe.cpp")
 endfunction()
+function(cf_log_configure_target target category)
+endfunction()
+function(find_package package)
+endfunction()
 add_library(chunfe_gui INTERFACE)
 set_property(TARGET chunfe_gui PROPERTY QT_QML_MODULE_QML_FILES "")
-foreach(name Qt6::Quick Qt6::QuickControls2 chunfe_fonts chunfe_guiplugin)
+add_library(audio_pipline SHARED "${{CMAKE_CURRENT_SOURCE_DIR}}/audio.cpp")
+foreach(name Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia chunfe_fonts chunfe_guiplugin)
     add_library(${{name}} INTERFACE IMPORTED)
 endforeach()
 add_subdirectory("{ROOT / 'src/app'}" app)
@@ -199,6 +215,7 @@ file(GENERATE OUTPUT "${{CMAKE_BINARY_DIR}}/version.txt" CONTENT "${{PROJECT_VER
             version_file = installed / "share/chunfe/version.txt"
             self.assertTrue(version_file.is_file(), "Linux packages must carry their CMake-generated application version")
             self.assertEqual(version_file.read_bytes(), b"2.3.4.5\n")
+            self.assertTrue(list((installed / "lib").glob("*audio_pipline*")), "The audio library must be installed with the application")
 
 
 class PackageVersionTests(unittest.TestCase):
@@ -219,6 +236,48 @@ class PackageVersionTests(unittest.TestCase):
     def test_macos_accepts_four_part_version_at_install_boundary(self):
         result = self.run_macos_package("2.3.4.5")
         self.assertEqual(result.returncode, 77, result.stderr)
+
+    def test_macos_requires_deployed_qt_configuration_and_svg_plugin(self):
+        for missing in (None, "qt.conf", "libqsvg.dylib"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "packaging/macos").mkdir(parents=True)
+                (root / "src/app").mkdir(parents=True)
+                (root / "build").mkdir()
+                (root / "bin").mkdir()
+                shutil.copyfile(ROOT / "packaging/macos/package.sh", root / "packaging/macos/package.sh")
+                shutil.copyfile(ROOT / "src/app/qt-macos.conf", root / "src/app/qt-macos.conf")
+                (root / "build/version.txt").write_text("2.3.4.5\n")
+                config = "" if missing == "qt.conf" else f'cp "{root}/src/app/qt-macos.conf" "$app/Contents/Resources/qt.conf"'
+                svg = "" if missing == "libqsvg.dylib" else 'touch "$app/Contents/PlugIns/imageformats/libqsvg.dylib"'
+                cmake = root / "bin/cmake"
+                cmake.write_text(f'''#!/bin/sh
+app="$4/Chunfe.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks/QtCore.framework" \\
+    "$app/Contents/Frameworks/QtMultimedia.framework" "$app/Contents/PlugIns/platforms" \\
+    "$app/Contents/PlugIns/multimedia" "$app/Contents/PlugIns/imageformats" \\
+    "$app/Contents/Resources/qml/QtQuick"
+touch "$app/Contents/MacOS/Chunfe" "$app/Contents/PlugIns/platforms/libqcocoa.dylib" \\
+    "$app/Contents/PlugIns/multimedia/backend.dylib" "$app/Contents/Resources/qml/QtQuick/qmldir"
+chmod +x "$app/Contents/MacOS/Chunfe"
+{config}
+{svg}
+''')
+                lipo = root / "bin/lipo"
+                lipo.write_text("#!/bin/sh\nprintf 'arm64\\n'\n")
+                # Reaching the signing step proves the staged payload passed its checks.
+                xattr = root / "bin/xattr"
+                xattr.write_text("#!/bin/sh\nexit 77\n")
+                for command in (cmake, lipo, xattr):
+                    command.chmod(0o755)
+                result = subprocess.run(["bash", str(root / "packaging/macos/package.sh"), str(root / "build")],
+                                        env={**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}"},
+                                        text=True, capture_output=True)
+                if missing is None:
+                    self.assertEqual(result.returncode, 77, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 77, result.stderr)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
 
     def test_macos_rejects_noncanonical_or_out_of_range_version_before_install(self):
         for value in ("1.2.3", "01.2.3.4", "1.2.3.65536", "1.2.3.4\n5"):

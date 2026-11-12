@@ -1,9 +1,11 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include "app_fonts.h"
+#include "cf_log.h"
 
 int main(int argc, char *argv[])
 {
+    CfLog::initialize();
     // Keep newly created and recycled QtRendering glyph nodes visually comparable.
     // Qt 6.12 resets recycled distance-field nodes to grayscale antialiasing.
     // This is an explicit application policy; TextBlock never changes global state.

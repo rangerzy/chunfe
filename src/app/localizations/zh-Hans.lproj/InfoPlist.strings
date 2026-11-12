@@ -1,0 +1,4 @@
+"CFBundleName" = "春风";
+"CFBundleDisplayName" = "春风";
+"NSMicrophoneUsageDescription" = "春风需要使用麦克风，在收音测试或对话期间接收您的声音。";
+"NSAudioCaptureUsageDescription" = "春风需要录制系统音频，在收音测试或对话期间接收对方的声音。";

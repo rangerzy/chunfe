@@ -1,0 +1,5 @@
+find_package(Qt6 6.12 REQUIRED COMPONENTS QuickTest)
+qt_add_executable(native_ui_tests native_ui_tests.cpp)
+target_link_libraries(native_ui_tests PRIVATE Qt6::QuickTest chunfe_gui chunfe_guiplugin chunfe_fonts)
+add_test(NAME native_ui_tests COMMAND native_ui_tests -input "${CMAKE_CURRENT_SOURCE_DIR}")
+set_tests_properties(native_ui_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")

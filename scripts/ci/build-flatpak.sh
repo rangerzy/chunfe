@@ -41,6 +41,8 @@ if [[ ! "$qt_version" =~ ^6\.12\.[0-9]+$ ]]; then
     echo "Expected released Qt 6.12.x in the SDK; found: $qt_version" >&2
     exit 1
 fi
+echo "SDK-native CMake (the manifest provisions the build tool separately):"
+flatpak run --user --arch=x86_64 --command=cmake "org.kde.Sdk//$runtime_branch" --version
 echo "Building Chunfe $version with Qt $qt_version (KDE $runtime_branch)."
 
 desktop-file-validate "packaging/linux/$app_id.desktop"
@@ -56,6 +58,11 @@ if ! printf '%s\n' "$version" | cmp -s - "$build_dir/files/share/chunfe/version.
 fi
 
 test -x "$build_dir/files/bin/Chunfe"
+# The CMake module is build-only; its per-module cleanup must remove its tools.
+for tool in cmake ctest cpack ccmake cmake-gui; do
+    test ! -e "$build_dir/files/bin/$tool"
+done
+test ! -d "$build_dir/files/share/cmake-4.3"
 test -f "$build_dir/files/share/applications/$app_id.desktop"
 test -f "$build_dir/files/share/icons/hicolor/scalable/apps/$app_id.svg"
 flatpak build-bundle --arch=x86_64 --runtime-repo="$runtime_repo" \

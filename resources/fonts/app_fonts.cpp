@@ -1,4 +1,5 @@
 #include "app_fonts.h"
+#include "cf_log.h"
 
 #include <QFontDatabase>
 #include <QDir>
@@ -6,7 +7,6 @@
 #include <QGuiApplication>
 #include <QResource>
 #include <QThread>
-#include <QDebug>
 
 #include <array>
 
@@ -23,7 +23,7 @@ bool initialize()
 {
     auto *application = qobject_cast<QGuiApplication *>(QCoreApplication::instance());
     if (!application || QThread::currentThread() != application->thread()) {
-        qCritical("ChunfeFonts::initialize requires QGuiApplication and its GUI thread");
+        ERROR_CF_LOG() << "ChunfeFonts::initialize requires QGuiApplication and its GUI thread";
         return false;
     }
 
@@ -41,7 +41,7 @@ bool initialize()
     const auto interFiles = interDirectory.entryList({QStringLiteral("*.ttf")},
                                                    QDir::Files, QDir::Name);
     if (interFiles.isEmpty()) {
-        qCritical().noquote() << "No bundled Inter fonts found:" << interDirectory.path();
+        ERROR_CF_LOG().noquote() << "No bundled Inter fonts found:" << interDirectory.path();
         return false;
     }
     QStringList paths = {QStringLiteral(":/fonts/oppo-sans/OPPO Sans 4.0.ttf")};
@@ -57,7 +57,7 @@ bool initialize()
     for (const auto &path : paths) {
         const int id = QFontDatabase::addApplicationFont(path);
         if (id < 0) {
-            qCritical().noquote() << "Could not register bundled font:" << path;
+            ERROR_CF_LOG().noquote() << "Could not register bundled font:" << path;
             rollback();
             return false;
         }
@@ -96,13 +96,13 @@ QString licenseNotices()
     for (const auto &license : licenses) {
         QFile file(license.path);
         if (!file.open(QIODevice::ReadOnly)) {
-            qCritical().noquote() << "Could not read bundled font license:"
+            ERROR_CF_LOG().noquote() << "Could not read bundled font license:"
                                  << license.path << file.errorString();
             return {};
         }
         const auto contents = file.readAll();
         if (file.error() != QFileDevice::NoError) {
-            qCritical().noquote() << "Could not read bundled font license:"
+            ERROR_CF_LOG().noquote() << "Could not read bundled font license:"
                                  << license.path << file.errorString();
             return {};
         }

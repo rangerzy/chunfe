@@ -4,7 +4,7 @@
 
 - QML URI / 公开组件：`TextBlock` / `TextBlock`
 - CMake targets：`text_block`、`text_blockplugin`
-- 环境：Qt 6.12+（Core、Gui、Qml、Quick）、C++23、CMake 3.24+
+- 环境：Qt 6.12+（Core、Gui、Qml、Quick）、C++23、CMake 4.3.6+
 
 ## 接入
 
@@ -110,7 +110,7 @@ TextBlock 实验室与独立示例在调用方接入复制交互，演示右键�
 
 ## 构建与检查
 
-根工程构建最小 Chunfe 应用，示例均为独立工程；根工程与 CI 不构建或测试示例。根目录使用 `-DCHUNFE_BUILD_TESTS=ON` 时，`TEXT_BLOCK_BUILD_TESTS` 默认跟随开启，也可显式覆盖；主应用 GUI 模块的 lint target 为 `chunfe_gui_qmllint`。
+根工程构建最小 Chunfe 应用，示例均为独立工程；根工程与正式发布工作流不构建示例，独立检查工作流会构建示例并运行其可用测试。根目录使用 `-DCHUNFE_BUILD_TESTS=ON` 时，`TEXT_BLOCK_BUILD_TESTS` 默认跟随开启，也可显式覆盖；主应用 GUI 模块的 lint target 为 `chunfe_gui_qmllint`。
 
 [`examples/text_block_lab`](../../examples/text_block_lab) 包含完整实验页面、计时辅助器与调用方交互，QML URI 为 `TextBlockLab`。在仓库根目录独立配置：
 

@@ -4,7 +4,7 @@
 
 - QML URI：`Calendar`；公开组件：`PastDateCalendar`
 - CMake targets：`calendar`、`calendarplugin`
-- 环境：Qt 6.12+（Quick、QuickControls2 及其基础库）、CMake 3.24+
+- 环境：Qt 6.12+（Quick、QuickControls2 及其基础库）、CMake 4.3.6+
 - 模块不依赖 Chunfe 主应用、字体资源或业务数据；`LiquidSelection` 是内部实现。
 
 ## 接入
