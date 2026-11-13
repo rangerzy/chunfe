@@ -14,6 +14,7 @@ ApplicationWindow {
     property var audioDevices: null
     property var audioLevelTest: null
     property var offlineTranscription: null
+    property bool applicationQuitting: false
     readonly property var transcriptionTest: offlineTranscription || demo.transcriptionTest
     readonly property alias demoController: demo
     readonly property alias transcriptVisible: transcriptWindow.visible
@@ -23,11 +24,28 @@ ApplicationWindow {
     height: 560
     minimumWidth: 760
     minimumHeight: 520
-    visible: !demo.interviewActive
+    visible: !applicationQuitting && !demo.interviewActive
     title: qsTr("春风")
     color: Theme.background
     font.pixelSize: 14
-    onClosing: { transcriptionTest.close(); demo.cancelChecks(); Qt.quit() }
+    onClosing: {
+        if (!applicationQuitting)
+            Qt.quit()
+    }
+    onApplicationQuittingChanged: {
+        if (applicationQuitting) {
+            transcriptionTest.close()
+            demo.cancelChecks()
+            demo.finishInterview()
+        }
+    }
+
+    function closeInterviewWindow(close) {
+        if (!applicationQuitting && demo.interviewActive) {
+            close.accepted = false
+            demo.finishInterview()
+        }
+    }
 
     function positionInterviewWindows() {
         const available = Qt.rect(window.screen.virtualX, window.screen.virtualY, window.screen.width, window.screen.height)
@@ -42,7 +60,13 @@ ApplicationWindow {
     DemoController {
         id: demo
         onInterviewStarted: { window.transcriptionTest.close(); window.positionInterviewWindows() }
-        onInterviewFinished: { window.show(); window.raise(); window.requestActivate() }
+        onInterviewFinished: {
+            if (!window.applicationQuitting) {
+                window.show()
+                window.raise()
+                window.requestActivate()
+            }
+        }
         onNotification: function(message, severity) { toast.showNotification(message, severity) }
         onPreflightVisibleChanged: { if (preflightVisible) checks.open(); else checks.close() }
     }
@@ -113,7 +137,7 @@ ApplicationWindow {
         width: Math.min(480, screen.width - 40)
         height: transcriptPanel.implicitHeight
         visible: demo.interviewActive
-        onClosing: function(close) { close.accepted = false; demo.finishInterview() }
+        onClosing: function(close) { window.closeInterviewWindow(close) }
         TranscriptPanel {
             id: transcriptPanel
             anchors.fill: parent
@@ -135,7 +159,7 @@ ApplicationWindow {
         width: Math.min(400, screen.width - 40)
         height: answerPanel.implicitHeight
         visible: demo.interviewActive
-        onClosing: function(close) { close.accepted = false; demo.finishInterview() }
+        onClosing: function(close) { window.closeInterviewWindow(close) }
         AnswerPanel {
             id: answerPanel
             anchors.fill: parent

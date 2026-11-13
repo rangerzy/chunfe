@@ -1,10 +1,10 @@
 #include "app_fonts.h"
 #include "audio_device_list.h"
 #include "audio_level_test.h"
+#include "chunfe_application.h"
 #include "offline_transcription_controller.h"
 #include "cf_log.h"
 
-#include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlExtensionPlugin>
@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
     // newly created and recycled Qt Quick glyph nodes, respecting user settings.
     if (!qEnvironmentVariableIsSet("QSG_DISTANCEFIELD_ANTIALIASING"))
         qputenv("QSG_DISTANCEFIELD_ANTIALIASING", "gray");
-    QGuiApplication app(argc, argv);
+    ChunfeApplication app(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("rangerzy"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("io.github.rangerzy"));
     QCoreApplication::setApplicationName(QStringLiteral("Chunfe"));
@@ -47,6 +47,7 @@ int main(int argc, char *argv[])
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("Chunfe", "Main");
+    app.setMainWindow(engine.rootObjects().value(0));
 
     return app.exec();
 }
