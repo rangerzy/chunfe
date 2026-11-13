@@ -1,5 +1,6 @@
 #include "audio_pipline_manager.h"
 #include "audio_level_test.h"
+#include "captures/audio_capture_buffer.h"
 #include "captures/audio_capture_context.h"
 #include "captures/audio_capture_worker.h"
 #if defined(Q_OS_MACOS)
@@ -13,6 +14,7 @@
 #include <QTimer>
 #include <QUuid>
 #include <QtTest>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -68,59 +70,55 @@ void delay(std::atomic<int>& milliseconds, std::atomic<bool>& inProgress)
     inProgress.store(false, std::memory_order_release);
 }
 
-// A real enabled-stage consumer: every audio/cancellation/boundary block is
-// acknowledged through the queue API. The manager must never do this for us.
-class ConvertConsumer final : public QObject
+// Observe the production handoff on the manager's thread so the tests can
+// check payloads and ordering across capture and stop signals.
+class PcmObserver final : public QObject
 {
 public:
-    ConvertConsumer(AudioPiplineManager& manager, AudioPipline::CaptureId id)
-        : m_manager(manager), m_id(std::move(id))
+    explicit PcmObserver(AudioPiplineManager& manager)
     {
-        connect(&manager, &AudioPiplineManager::queueUpdated, this,
-                [this](const AudioPipline::CaptureId& id, quint64) {
-            if (id == m_id) consume();
-        }, Qt::QueuedConnection);
-        QTimer::singleShot(0, this, [this] { consume(); });
+        connect(&manager, &AudioPiplineManager::pcmReady, this,
+                [this](const CaptureId& id, std::uint32_t epoch, AudioSource source,
+                       const CapturedAudio& audio) {
+            events.append({id, epoch, source, audio, 0, false});
+        });
+        connect(&manager, &AudioPiplineManager::pcmEnded, this,
+                [this](const CaptureId& id, std::uint32_t epoch, AudioSource source,
+                       std::uint64_t trailingDroppedFrames) {
+            events.append({id, epoch, source, {}, trailingDroppedFrames, true});
+        });
     }
 
-    QString error;
-    int audioBlocks = 0;
-    int segmentEnds = 0;
-    int streamEnds = 0;
-    int cancelledBlocks = 0;
-    QList<AudioPipline::SharedBlockHeader> acknowledgedBoundaries;
+    using CaptureId = AudioPipline::CaptureId;
+    using AudioSource = AudioPipline::AudioSource;
+    using CapturedAudio = AudioPipline::CapturedAudio;
+    struct Event {
+        CaptureId id;
+        std::uint32_t epoch;
+        AudioSource source;
+        CapturedAudio audio;
+        std::uint64_t trailingDroppedFrames;
+        bool ended;
+    };
 
-private:
-    void consume()
+    QList<Event> events;
+
+    int countEnds(AudioSource source, std::uint32_t epoch) const
     {
-        using namespace AudioPipline;
-        if (!error.isEmpty()) return;
-        for (int processed = 0; processed < 512; ++processed) {
-            auto block = m_manager.pcmQueue().tryAcquire(m_id, Stage::Convert);
-            if (block.status == AcquireStatus::WouldBlock || block.status == AcquireStatus::Closed) return;
-            if (block.status != AcquireStatus::Acquired || !block.block) {
-                error = QStringLiteral("Convert acquisition failed: ") + block.error.message;
-                return;
-            }
-            const auto header = block.block->header();
-            const PcmInfo info{header.format, header.frameCount, header.validBytes, header.pcmTimestampNs};
-            const auto result = m_manager.pcmQueue().commit(*block.block, info);
-            if (result.status != QueueStatus::Ok && result.status != QueueStatus::Cancelled) {
-                error = QStringLiteral("Convert acknowledgement failed: ") + result.error.message;
-                return;
-            }
-            segmentEnds += header.kind == std::uint32_t(BlockKind::SegmentEnd);
-            streamEnds += header.kind == std::uint32_t(BlockKind::StreamEnd);
-            audioBlocks += header.kind == std::uint32_t(BlockKind::Audio);
-            cancelledBlocks += result.status == QueueStatus::Cancelled;
-            if (header.kind != std::uint32_t(BlockKind::Audio)) acknowledgedBoundaries.append(header);
-        }
-        error = QStringLiteral("Convert consumer did not reach the end of the available blocks");
+        int count = 0;
+        for (const auto& event : events)
+            if (event.ended && event.source == source && event.epoch == epoch) ++count;
+        return count;
     }
-
-    AudioPiplineManager& m_manager;
-    AudioPipline::CaptureId m_id;
 };
+
+bool waitForCaptureActivation(AudioPiplineManager& manager)
+{
+    // Running is emitted before activation is posted to the device thread.
+    // The following level update is only possible once that thread activated.
+    QSignalSpy changes(&manager, &AudioPiplineManager::captureChanged);
+    return changes.wait(1000) && manager.capture().state == AudioPipline::CaptureState::Running;
+}
 }
 
 // Fake only the miniaudio boundary; the manager under test is production code.
@@ -310,52 +308,51 @@ private slots:
     }
 #endif
 
+
     void workerSplitsPcmAndGatesCallbacksDuringStop()
     {
         using namespace AudioPipline;
         prepareInput();
         auto context = std::make_shared<AudioCaptureContext>();
         context->refresh();
-        auto queue = std::make_shared<SharedPcmQueue>();
+        auto buffer = std::make_shared<AudioCaptureBuffer>();
         const CaptureId id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        const ProcessingStages stages = ProcessingStage::Convert | ProcessingStage::Resample |
-                                        ProcessingStage::Save | ProcessingStage::Asr;
-        QCOMPARE(queue->create({4, 8, stages}, id).status, QueueStatus::Ok);
         AudioCaptureWorker worker(AudioSource::Mic, context);
-        AudioCaptureWorker::Output output{queue, id, std::chrono::steady_clock::now(), 8, 1};
+        AudioCaptureWorker::Output output{buffer, id, std::chrono::steady_clock::now() - std::chrono::seconds(1), 1};
+        QSignalSpy wake(&worker, &AudioCaptureWorker::pcmAvailable);
         QCOMPARE(worker.prepare({}, output, false).code, AudioErrorCode::None);
         QCOMPARE(worker.startCapture().code, AudioErrorCode::None);
 
-        const std::int16_t samples[] = {16384, -16384, 32767, -32768, 0};
-        fake.callback(fake.activeDevice, nullptr, samples, 5);
-        QCOMPARE(queue->snapshot().usedSlots, 0u);
+        std::int16_t samples[325];
+        std::fill(std::begin(samples), std::end(samples), 16384);
+        fake.callback(fake.activeDevice, nullptr, samples, 325);
+        CapturedAudio audio;
+        QVERIFY(!buffer->tryTake(audio));
         worker.setAccepting(true);
-        fake.callback(fake.activeDevice, nullptr, samples, 5);
-        QCOMPARE(queue->snapshot().usedSlots, 2u);
+        fake.callback(fake.activeDevice, nullptr, samples, 325);
+        // Producer retains its own copy until the reader consumes each slot.
+        std::fill(std::begin(samples), std::end(samples), -16384);
+        QCOMPARE(wake.count(), 1);
         QCOMPARE(fake.requestedFormat, ma_format_s16);
         QCOMPARE(fake.requestedRate, 16000u);
         QCOMPARE(fake.requestedChannels, 1u);
-        const auto level = worker.level();
-        QCOMPARE(level.peak, 1.0f);
-        QVERIFY(std::abs(level.rms - 0.70710678f) < 0.00002f);
-        for (int index = 0; index < 2; ++index) {
-            auto block = queue->tryAcquire(id, Stage::Convert);
-            QCOMPARE(block.status, AcquireStatus::Acquired);
-            QCOMPARE(block.block->header().source, std::uint32_t(AudioSource::Mic));
-            const std::uint32_t frames = index == 1 ? 1 : 4;
-            QCOMPARE(block.block->header().frameCount, frames);
-            QCOMPARE(block.block->header().validBytes, frames * sizeof(std::int16_t));
-            QCOMPARE(block.block->header().format.sampleRate, 16000u);
-            QCOMPARE(block.block->header().format.channels, 1u);
-            QCOMPARE(block.block->header().format.sampleType, SampleType::Int16);
-            QCOMPARE(std::memcmp(block.block->data(), samples + index * 4, frames * sizeof(std::int16_t)), 0);
-            PcmInfo info{block.block->header().format, frames, frames * std::uint32_t(sizeof(std::int16_t)),
-                         block.block->header().pcmTimestampNs};
-            QCOMPARE(queue->commit(*block.block, info).status, QueueStatus::Ok);
-        }
+        QCOMPARE(worker.level().peak, 0.5f);
+        QCOMPARE(worker.level().rms, 0.5f);
+        QVERIFY(buffer->tryTake(audio));
+        QCOMPARE(audio.sequence, quint64(0));
+        QCOMPARE(audio.pcm.size(), 640);
+        const auto firstTimestamp = audio.timestampNs;
+        QVERIFY(buffer->tryTake(audio));
+        QCOMPARE(audio.sequence, quint64(1));
+        QCOMPARE(audio.timestampNs - firstTimestamp, qint64(20000000));
+        QCOMPARE(audio.pcm.size(), 10);
+        const std::int16_t copied[] = {16384, 16384, 16384, 16384, 16384};
+        QCOMPARE(std::memcmp(audio.pcm.constData(), copied, sizeof(copied)), 0);
+
         fake.emitFrameOnStop = true;
         QCOMPARE(worker.stopCapture().code, AudioErrorCode::None);
-        QCOMPARE(queue->snapshot().usedSlots, 2u);
+        QVERIFY(!buffer->tryTake(audio));
+        QCOMPARE(wake.count(), 1);
         QVERIFY(!deviceIsLive.load());
     }
 
@@ -365,11 +362,9 @@ private slots:
         prepareInput();
         auto context = std::make_shared<AudioCaptureContext>();
         context->refresh();
-        auto queue = std::make_shared<SharedPcmQueue>();
         const CaptureId id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        QCOMPARE(queue->create({4, 64}, id).status, QueueStatus::Ok);
         AudioCaptureWorker worker(AudioSource::Mic, context);
-        AudioCaptureWorker::Output output{queue, id, std::chrono::steady_clock::now(), 64, 1};
+        AudioCaptureWorker::Output output{nullptr, id, std::chrono::steady_clock::now(), 1};
         QCOMPARE(worker.prepare({}, output, false).code, AudioErrorCode::None);
         const auto originalDevice = worker.info().device.id;
         QVERIFY(!originalDevice.isEmpty());
@@ -384,36 +379,32 @@ private slots:
     }
 
 #if defined(Q_OS_MACOS)
+
     void systemCaptureSplitBlocksKeepTheirTimeOffsets()
     {
         using namespace AudioPipline;
         prepareOutput();
         auto context = std::make_shared<AudioCaptureContext>();
         context->refresh();
-        auto queue = std::make_shared<SharedPcmQueue>();
+        auto buffer = std::make_shared<AudioCaptureBuffer>();
         const CaptureId id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        QCOMPARE(queue->create({4, 2048, ProcessingStage::Convert}, id).status, QueueStatus::Ok);
         AudioCaptureWorker worker(AudioSource::Spk, context);
-        AudioCaptureWorker::Output output{queue, id, std::chrono::steady_clock::now() - std::chrono::seconds(1), 2048, 1};
+        AudioCaptureWorker::Output output{buffer, id, std::chrono::steady_clock::now() - std::chrono::seconds(1), 1};
         QCOMPARE(worker.prepare({}, output, false).code, AudioErrorCode::None);
         QCOMPARE(worker.startCapture().code, AudioErrorCode::None);
         worker.setAccepting(true);
 
-        // 模拟一个原始输入被拆成两个 64 ms 输出块：第一块后面仍有 64 ms 待交付。
+        // Simulate two 64 ms outputs from the same original input.
         const std::int16_t samples[1024] = {};
         FakeMacSystemCapture::sendSamples(samples, 1024, 64000000);
         FakeMacSystemCapture::sendSamples(samples, 1024);
-        auto first = queue->tryAcquire(id, Stage::Convert);
-        QCOMPARE(first.status, AcquireStatus::Acquired);
-        const auto firstHeader = first.block->header();
-        QCOMPARE(firstHeader.source, std::uint32_t(AudioSource::Spk));
-        const PcmInfo firstInfo{firstHeader.format, firstHeader.frameCount, firstHeader.validBytes, firstHeader.pcmTimestampNs};
-        QCOMPARE(queue->commit(*first.block, firstInfo).status, QueueStatus::Ok);
-        auto second = queue->tryAcquire(id, Stage::Convert);
-        QCOMPARE(second.status, AcquireStatus::Acquired);
-        const auto delta = second.block->header().pcmTimestampNs - firstHeader.pcmTimestampNs;
+        CapturedAudio audio;
+        QVERIFY(buffer->tryTake(audio));
+        const auto firstTimestamp = audio.timestampNs;
+        for (int i = 0; i < 4; ++i)
+            QVERIFY(buffer->tryTake(audio));
+        const auto delta = audio.timestampNs - firstTimestamp;
         QVERIFY(delta >= 64000000 && delta < 264000000);
-        QCOMPARE(second.block->header().source, std::uint32_t(AudioSource::Spk));
         QCOMPARE(worker.stopCapture().code, AudioErrorCode::None);
     }
 
@@ -477,6 +468,7 @@ private slots:
         system.startDelayMs = 300;
         AudioPiplineManager manager;
         QSignalSpy startedSignal(&manager, &AudioPiplineManager::captureStarted);
+        PcmObserver observer(manager);
         bool observedSystemStartup = false;
         bool publishedBeforeReady = false;
         QTimer heartbeat;
@@ -484,12 +476,12 @@ private slots:
             if (!system.startInProgress.load(std::memory_order_acquire)) return;
             observedSystemStartup = true;
             publishedBeforeReady |= manager.capture().state != CaptureState::Starting ||
-                                    !startedSignal.isEmpty() || manager.queueSnapshot().usedSlots != 0;
+                                    !startedSignal.isEmpty() || !observer.events.isEmpty();
         });
         heartbeat.start(5);
         CaptureConfig config;
         config.sources = AudioSource::Mic | AudioSource::Spk;
-        config.queue.enabledStages = ProcessingStage::Convert;
+        config.deliverPcm = true;
         const auto started = manager.startCapture(config);
         QVERIFY(started.accepted);
         QTRY_VERIFY_WITH_TIMEOUT(manager.capture().state == CaptureState::Running ||
@@ -506,31 +498,30 @@ private slots:
             QCOMPARE(source.format.sampleType, SampleType::Int16);
         }
         QCOMPARE(manager.capture().runningSources, AudioSource::Mic | AudioSource::Spk);
-        QCOMPARE(manager.queueSnapshot().usedSlots, 0u);
+        QVERIFY(waitForCaptureActivation(manager));
+        QVERIFY(observer.events.isEmpty());
 
         const std::int16_t mic[] = {16384, -16384};
         const std::int16_t spk[] = {8192, -8192};
         fake.callback(fake.activeDevice, nullptr, mic, 2);
         FakeMacSystemCapture::sendSamples(spk, 2);
-        for (AudioSource source : {AudioSource::Mic, AudioSource::Spk}) {
-            auto block = manager.pcmQueue().tryAcquire(started.captureId, Stage::Convert);
-            QCOMPARE(block.status, AcquireStatus::Acquired);
-            QCOMPARE(block.block->header().source, std::uint32_t(source));
-            const std::uint32_t bytes = source == AudioSource::Mic ? sizeof(mic) : sizeof(spk);
-            QCOMPARE(block.block->header().validBytes, bytes);
-            QCOMPARE(block.block->header().format.sampleRate, 16000u);
-            QCOMPARE(block.block->header().format.channels, 1u);
-            QCOMPARE(block.block->header().format.sampleType, SampleType::Int16);
-            QCOMPARE(block.block->header().format.layout, PcmLayout::Interleaved);
-            QCOMPARE(std::memcmp(block.block->data(), source == AudioSource::Mic ? mic : spk, bytes), 0);
-            PcmInfo info{block.block->header().format, 2, bytes, block.block->header().pcmTimestampNs};
-            QCOMPARE(manager.pcmQueue().commit(*block.block, info).status, QueueStatus::Ok);
+        QTRY_COMPARE_WITH_TIMEOUT(observer.events.size(), 2, 3000);
+        AudioSources received;
+        for (const auto& event : observer.events) {
+            QCOMPARE(event.id, started.captureId);
+            QCOMPARE(event.epoch, 0u);
+            QVERIFY(!event.ended);
+            QVERIFY(!received.testFlag(event.source));
+            received |= event.source;
+            QCOMPARE(event.audio.sequence, quint64(0));
+            QCOMPARE(event.audio.pcm.size(), 4);
+            QCOMPARE(std::memcmp(event.audio.pcm.constData(), event.source == AudioSource::Mic ? mic : spk, 4), 0);
         }
-        ConvertConsumer consumer(manager, started.captureId);
-        QVERIFY(manager.stopCapture(started.captureId, StopMode::Discard).accepted);
+        QCOMPARE(received, AudioSource::Mic | AudioSource::Spk);
+        QVERIFY(manager.stopCapture(started.captureId, StopMode::Drain).accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
-        QVERIFY2(consumer.error.isEmpty(), qPrintable(consumer.error));
-        QCOMPARE(consumer.streamEnds, 2);
+        QCOMPARE(observer.countEnds(AudioSource::Mic, 0), 1);
+        QCOMPARE(observer.countEnds(AudioSource::Spk, 0), 1);
         QVERIFY(!deviceIsLive.load());
         QVERIFY(!system.live);
     }
@@ -560,28 +551,26 @@ private slots:
         heartbeat.start(5);
         CaptureConfig config;
         config.sources = AudioSource::Mic | AudioSource::Spk;
-        config.queue.enabledStages = ProcessingStage::Convert;
+        config.deliverPcm = true;
         const auto started = manager.startCapture(config);
         QVERIFY(started.accepted);
-        ConvertConsumer consumer(manager, started.captureId);
+        PcmObserver observer(manager);
         QTRY_VERIFY_WITH_TIMEOUT(disconnectedDuringSystemStartup, 3000);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
         QVERIFY(startedSignals.isEmpty());
-        QCOMPARE(consumer.audioBlocks, 0);
-        QVERIFY2(consumer.error.isEmpty(), qPrintable(consumer.error));
-        QCOMPARE(manager.queueSnapshot().state, QueueState::Closed);
+        QVERIFY(observer.events.isEmpty());
         QVERIFY(!deviceIsLive.load(std::memory_order_acquire));
         QVERIFY(!system.live);
     }
 
-    void sourceFailurePausePreservesBothBoundaryKinds_data()
+    void sourceFailureDuringPauseStopsBothDevices_data()
     {
         QTest::addColumn<bool>("pauseDuringStopRetry");
         QTest::newRow("pause-from-disconnection-issue") << false;
         QTest::newRow("pause-during-failed-source-stop-retry") << true;
     }
 
-    void sourceFailurePausePreservesBothBoundaryKinds()
+    void sourceFailureDuringPauseStopsBothDevices()
     {
         using namespace AudioPipline;
         QFETCH(bool, pauseDuringStopRetry);
@@ -589,9 +578,10 @@ private slots:
         prepareInput();
         prepareOutput();
         AudioPiplineManager manager;
+        PcmObserver observer(manager);
         CaptureConfig config;
         config.sources = AudioSource::Mic | AudioSource::Spk;
-        config.queue.enabledStages = ProcessingStage::Convert;
+        config.deliverPcm = true;
         const auto started = manager.startCapture(config);
         QVERIFY(started.accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
@@ -626,46 +616,23 @@ private slots:
         QVERIFY(sawDisconnection);
         if (pauseDuringStopRetry) QVERIFY(sawStopFailure);
 
-        QTRY_COMPARE_WITH_TIMEOUT(manager.queueSnapshot().usedSlots, 2u, 3000);
-        AudioSources acknowledged;
-        for (int index = 0; index < 2; ++index) {
-            auto boundary = manager.pcmQueue().tryAcquire(started.captureId, Stage::Convert);
-            QCOMPARE(boundary.status, AcquireStatus::Acquired);
-            const auto header = boundary.block->header();
-            const auto source = static_cast<AudioSource>(header.source);
-            QVERIFY(source == AudioSource::Mic || source == AudioSource::Spk);
-            QVERIFY(!acknowledged.testFlag(source));
-            if (source == failedSource) {
-                QCOMPARE(header.kind, std::uint32_t(BlockKind::StreamEnd));
-                QCOMPARE(header.errorCode, std::uint32_t(AudioErrorCode::DeviceDisconnected));
-            } else {
-                QCOMPARE(header.kind, std::uint32_t(BlockKind::SegmentEnd));
-                QCOMPARE(header.errorCode, std::uint32_t(AudioErrorCode::None));
-                QVERIFY(header.flags & std::uint32_t(BlockFlag::Cancelled));
-            }
-            QTest::qWait(30);
-            QCOMPARE(manager.capture().state, CaptureState::Stopping);
-            const PcmInfo info{header.format, header.frameCount, header.validBytes, header.pcmTimestampNs};
-            const auto result = manager.pcmQueue().commit(*boundary.block, info);
-            QVERIFY(result.status == QueueStatus::Ok || result.status == QueueStatus::Cancelled);
-            acknowledged |= source;
-        }
-        QCOMPARE(acknowledged, AudioSource::Mic | AudioSource::Spk);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Paused, 3000);
-        ConvertConsumer consumer(manager, started.captureId);
+        QVERIFY(!deviceIsLive.load(std::memory_order_acquire));
+        QVERIFY(!FakeMacSystemCapture::state().live);
+        QVERIFY(observer.events.isEmpty());
         QVERIFY(manager.stopCapture(started.captureId, StopMode::Discard).accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
-        QVERIFY2(consumer.error.isEmpty(), qPrintable(consumer.error));
+        QVERIFY(observer.events.isEmpty());
     }
 
-    void failedResumeSourceIsFinalizedAcrossIssueReentry_data()
+    void resumeFailureKeepsSurvivorUsableAcrossIssueReentry_data()
     {
         QTest::addColumn<bool>("stopFromIssue");
         QTest::newRow("nested-event-loop-until-survivor-running") << false;
         QTest::newRow("stop-directly-from-resume-failure-issue") << true;
     }
 
-    void failedResumeSourceIsFinalizedAcrossIssueReentry()
+    void resumeFailureKeepsSurvivorUsableAcrossIssueReentry()
     {
         using namespace AudioPipline;
         QFETCH(bool, stopFromIssue);
@@ -674,14 +641,14 @@ private slots:
         AudioPiplineManager manager;
         CaptureConfig config;
         config.sources = AudioSource::Mic | AudioSource::Spk;
-        config.queue.enabledStages = ProcessingStage::Convert;
+        config.deliverPcm = true;
         const auto started = manager.startCapture(config);
         QVERIFY(started.accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
-        ConvertConsumer consumer(manager, started.captureId);
+        PcmObserver observer(manager);
         QVERIFY(manager.pauseCapture(started.captureId).accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Paused, 3000);
-        QCOMPARE(consumer.segmentEnds, 2);
+        QVERIFY(observer.events.isEmpty());
 
         bool enteredIssue = false;
         bool survivorReachedRunningInsideIssue = false;
@@ -720,27 +687,65 @@ private slots:
         }
 
         QTRY_VERIFY_WITH_TIMEOUT(!deviceIsLive.load(std::memory_order_acquire), 3000);
-        auto failedMicTails = [&] {
-            int count = 0;
-            for (const auto& header : consumer.acknowledgedBoundaries)
-                if (header.source == std::uint32_t(AudioSource::Mic) &&
-                    header.kind == std::uint32_t(BlockKind::StreamEnd) &&
-                    header.errorCode == std::uint32_t(AudioErrorCode::BackendStartFailed)) ++count;
-            return count;
-        };
-        QTRY_COMPARE_WITH_TIMEOUT(failedMicTails(), 1, 3000);
-        QVERIFY2(consumer.error.isEmpty(), qPrintable(consumer.error));
+        QVERIFY(observer.events.isEmpty());
         if (!stopFromIssue) {
             QVERIFY(FakeMacSystemCapture::state().live);
-            const auto priorAudioBlocks = consumer.audioBlocks;
+            QVERIFY(waitForCaptureActivation(manager));
             const std::int16_t samples[] = {8192, -8192};
             FakeMacSystemCapture::sendSamples(samples, 1);
-            QTRY_COMPARE_WITH_TIMEOUT(consumer.audioBlocks, priorAudioBlocks + 1, 3000);
+            QTRY_COMPARE_WITH_TIMEOUT(observer.events.size(), 1, 3000);
+            const auto& event = observer.events.last();
+            QVERIFY(!event.ended);
+            QCOMPARE(event.source, AudioSource::Spk);
+            QCOMPARE(event.epoch, 1u);
             QVERIFY(manager.stopCapture(started.captureId, StopMode::Discard).accepted);
             QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
+            QCOMPARE(observer.events.size(), 1);
         }
-        QCOMPARE(failedMicTails(), 1);
-        QCOMPARE(manager.queueSnapshot().state, QueueState::Closed);
+    }
+
+    void runtimeFailureDeliversTailAndKeepsOtherSourceRunning()
+    {
+        using namespace AudioPipline;
+        prepareInput();
+        prepareOutput();
+        AudioPiplineManager manager;
+        PcmObserver observer(manager);
+        CaptureConfig config;
+        config.sources = AudioSource::Mic | AudioSource::Spk;
+        config.deliverPcm = true;
+        const auto started = manager.startCapture(config);
+        QVERIFY(started.accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
+        QVERIFY(waitForCaptureActivation(manager));
+
+        const std::int16_t tail[] = {8192, -8192};
+        fake.callback(fake.activeDevice, nullptr, tail, 2);
+        ma_device_notification disconnected{};
+        disconnected.pDevice = fake.activeDevice;
+        disconnected.type = ma_device_notification_type_stopped;
+        fake.notification(&disconnected);
+        QTRY_COMPARE_WITH_TIMEOUT(observer.countEnds(AudioSource::Mic, 0), 1, 3000);
+        QCOMPARE(manager.capture().state, CaptureState::Running);
+        QCOMPARE(manager.capture().runningSources, AudioSources(AudioSource::Spk));
+        QCOMPARE(observer.events.size(), 2);
+        QCOMPARE(observer.events.first().source, AudioSource::Mic);
+        QVERIFY(!observer.events.first().ended);
+        QCOMPARE(observer.events.first().audio.pcm,
+                 QByteArray(reinterpret_cast<const char*>(tail), sizeof(tail)));
+        QVERIFY(observer.events.last().ended);
+
+        const std::int16_t survivor[] = {-4096, 4096};
+        FakeMacSystemCapture::sendSamples(survivor, 2);
+        QVERIFY(manager.stopCapture(started.captureId, StopMode::Drain).accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
+        QCOMPARE(observer.events.size(), 4);
+        QCOMPARE(observer.events.at(2).source, AudioSource::Spk);
+        QVERIFY(!observer.events.at(2).ended);
+        QCOMPARE(observer.events.at(2).audio.pcm,
+                 QByteArray(reinterpret_cast<const char*>(survivor), sizeof(survivor)));
+        QCOMPARE(observer.countEnds(AudioSource::Mic, 0), 1);
+        QCOMPARE(observer.countEnds(AudioSource::Spk, 0), 1);
     }
 
     void oneSourceStartupFailureRollsBackBothSources_data()
@@ -787,7 +792,6 @@ private slots:
         QVERIFY(enteredIssue);
         QVERIFY(reachedIdleInsideIssue);
         QVERIFY(startedSignal.isEmpty());
-        QCOMPARE(manager.queueSnapshot().state, QueueState::Closed);
         QVERIFY(!deviceIsLive.load());
         QVERIFY(!FakeMacSystemCapture::state().live);
         QCOMPARE(fake.deviceStartCalls, failPreparation ? 0 : 1);
@@ -800,134 +804,131 @@ private slots:
     }
 #endif
 
-    void capturesPcmAndPausesAfterConsumerAcknowledgesBoundaries()
-    {
-        prepareInput();
-        AudioPiplineManager manager;
-        AudioPipline::CaptureConfig config; config.sources = AudioPipline::AudioSource::Mic;
-        config.queue.enabledStages = AudioPipline::ProcessingStage::Convert;
-        const auto started = manager.startCapture(config);
-        QVERIFY(started.accepted);
-        QTRY_VERIFY_WITH_TIMEOUT(manager.capture().state == AudioPipline::CaptureState::Running || manager.capture().state == AudioPipline::CaptureState::Idle, 3000);
-        QVERIFY2(manager.capture().state == AudioPipline::CaptureState::Running, "Capture startup failed");
-        QVERIFY(fake.callback); QVERIFY(fake.activeDevice);
-        const std::int16_t input[] = {8192, -16384, 24576, -32768};
-        fake.callback(fake.activeDevice, nullptr, input, 4);
-        auto block = manager.pcmQueue().tryAcquire(started.captureId, AudioPipline::Stage::Convert);
-        QCOMPARE(block.status, AudioPipline::AcquireStatus::Acquired);
-        QVERIFY(block.block);
-        QCOMPARE(block.block->header().source, std::uint32_t(AudioPipline::AudioSource::Mic));
-        QCOMPARE(block.block->header().validBytes, std::uint32_t(sizeof(input)));
-        QCOMPARE(std::memcmp(block.block->data(), input, sizeof(input)), 0);
-        AudioPipline::PcmInfo info; info.format = block.block->header().format;
-        info.frameCount = 4; info.validBytes = sizeof(input); info.timestampNs = block.block->header().pcmTimestampNs;
-        QCOMPARE(manager.pcmQueue().commit(*block.block, info).status, AudioPipline::QueueStatus::Ok);
-        ConvertConsumer consumer(manager, started.captureId);
-        QVERIFY(manager.pauseCapture(started.captureId).accepted);
-        QTRY_VERIFY(manager.capture().state == AudioPipline::CaptureState::Paused);
-        QCOMPARE(consumer.segmentEnds, 1);
-        QVERIFY(manager.resumeCapture(started.captureId).accepted);
-        QTRY_VERIFY_WITH_TIMEOUT(manager.capture().state == AudioPipline::CaptureState::Running || manager.capture().state == AudioPipline::CaptureState::Idle, 3000);
-        QVERIFY2(manager.capture().state == AudioPipline::CaptureState::Running, "Capture startup failed");
-        QCOMPARE(fake.deviceStartCalls, 2);
-        QVERIFY(manager.stopCapture(started.captureId, AudioPipline::StopMode::Discard).accepted);
-        QTRY_VERIFY(manager.capture().state == AudioPipline::CaptureState::Idle);
-        QVERIFY2(consumer.error.isEmpty(), qPrintable(consumer.error));
-        QCOMPARE(consumer.streamEnds, 1);
-    }
-
-    void drainCanBeUpgradedToDiscardBeforeConsumerAcknowledgement()
-    {
-        prepareInput();
-        AudioPiplineManager manager;
-        AudioPipline::CaptureConfig config; config.sources = AudioPipline::AudioSource::Mic;
-        config.queue.enabledStages = AudioPipline::ProcessingStage::Convert;
-        const auto started = manager.startCapture(config); QVERIFY(started.accepted);
-        QTRY_VERIFY_WITH_TIMEOUT(manager.capture().state == AudioPipline::CaptureState::Running || manager.capture().state == AudioPipline::CaptureState::Idle, 3000);
-        QVERIFY2(manager.capture().state == AudioPipline::CaptureState::Running, "Capture startup failed");
-        const std::int16_t input[] = {3277, 6554}; fake.callback(fake.activeDevice, nullptr, input, 2);
-        QVERIFY(manager.stopCapture(started.captureId, AudioPipline::StopMode::Drain).accepted);
-        QCOMPARE(manager.capture().state, AudioPipline::CaptureState::Stopping);
-        QVERIFY(manager.queueSnapshot().usedSlots > 0);
-        QVERIFY(manager.stopCapture(started.captureId, AudioPipline::StopMode::Discard).accepted);
-        ConvertConsumer consumer(manager, started.captureId);
-        QTRY_VERIFY(manager.capture().state == AudioPipline::CaptureState::Idle);
-        QVERIFY2(consumer.error.isEmpty(), qPrintable(consumer.error));
-        QVERIFY(consumer.cancelledBlocks > 0);
-        QCOMPARE(consumer.streamEnds, 1);
-    }
-
-    void disabledProcessingStagesAllowDrainWithoutAConsumer()
+    void drainDeliversQueuedTailBeforeEnd()
     {
         using namespace AudioPipline;
         prepareInput();
         AudioPiplineManager manager;
+        PcmObserver observer(manager);
         CaptureConfig config;
         config.sources = AudioSource::Mic;
+        config.deliverPcm = true;
         const auto started = manager.startCapture(config);
         QVERIFY(started.accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
-        const std::int16_t samples[] = {8192, -8192};
-        fake.callback(fake.activeDevice, nullptr, samples, 2);
-        QSignalSpy drained(&manager, &AudioPiplineManager::queueDrained);
+        QVERIFY(fake.callback && fake.activeDevice);
+        QVERIFY(waitForCaptureActivation(manager));
+
+        // Both callbacks return before the manager's event loop can deliver them.
+        const std::int16_t first[] = {8192, -16384, 24576, -32768};
+        const std::int16_t tail[] = {4096};
+        fake.callback(fake.activeDevice, nullptr, first, 4);
+        fake.callback(fake.activeDevice, nullptr, tail, 1);
+        QVERIFY(observer.events.isEmpty());
         QVERIFY(manager.stopCapture(started.captureId, StopMode::Drain).accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
-        QCOMPARE(manager.queueSnapshot().state, QueueState::Closed);
-        QCOMPARE(drained.count(), 1);
-        const auto result = qvariant_cast<DrainResult>(drained.at(0).at(1));
-        QCOMPARE(result.mode, StopMode::Drain);
-        QVERIFY(!result.cancelled);
+        QCOMPARE(observer.events.size(), 3);
+        for (const auto& event : observer.events) {
+            QCOMPARE(event.id, started.captureId);
+            QCOMPARE(event.source, AudioSource::Mic);
+            QCOMPARE(event.epoch, 0u);
+        }
+        QVERIFY(!observer.events.at(0).ended);
+        QCOMPARE(observer.events.at(0).audio.sequence, quint64(0));
+        QCOMPARE(observer.events.at(0).audio.pcm, QByteArray(reinterpret_cast<const char*>(first), sizeof(first)));
+        QVERIFY(!observer.events.at(1).ended);
+        QCOMPARE(observer.events.at(1).audio.sequence, quint64(1));
+        QCOMPARE(observer.events.at(1).audio.pcm, QByteArray(reinterpret_cast<const char*>(tail), sizeof(tail)));
+        QVERIFY(observer.events.at(2).ended);
+        QCOMPARE(observer.events.at(2).trailingDroppedFrames, std::uint64_t(0));
     }
 
-    void cancelledBoundaryWaitsForEnabledConsumer_data()
-    {
-        QTest::addColumn<bool>("pause");
-        QTest::newRow("pause") << true;
-        QTest::newRow("stop") << false;
-    }
-
-    void cancelledBoundaryWaitsForEnabledConsumer()
+    void pauseDiscardsQueuedPcmAndResumeBeginsNewEpoch()
     {
         using namespace AudioPipline;
-        QFETCH(bool, pause);
         prepareInput();
         AudioPiplineManager manager;
+        PcmObserver observer(manager);
         CaptureConfig config;
         config.sources = AudioSource::Mic;
-        config.queue.enabledStages = ProcessingStage::Convert;
+        config.deliverPcm = true;
         const auto started = manager.startCapture(config);
         QVERIFY(started.accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
-        QSignalSpy drained(&manager, &AudioPiplineManager::queueDrained);
-        QVERIFY((pause ? manager.pauseCapture(started.captureId) :
-                         manager.stopCapture(started.captureId, StopMode::Discard)).accepted);
-        QTRY_VERIFY_WITH_TIMEOUT(!deviceIsLive.load(std::memory_order_acquire), 3000);
-        QTRY_COMPARE_WITH_TIMEOUT(manager.queueSnapshot().usedSlots, 1u, 3000);
-        auto boundary = manager.pcmQueue().tryAcquire(started.captureId, Stage::Convert);
-        QCOMPARE(boundary.status, AcquireStatus::Acquired);
-        const auto header = boundary.block->header();
-        QCOMPARE(header.kind, std::uint32_t(pause ? BlockKind::SegmentEnd : BlockKind::StreamEnd));
-        QVERIFY(header.flags & std::uint32_t(BlockFlag::Cancelled));
-        // Let completion events and several queue-pump turns run while the
-        // enabled consumer owns the tail; none may bypass its acknowledgement.
-        QTest::qWait(50);
+        QVERIFY(waitForCaptureActivation(manager));
+        const std::int16_t stale[] = {8192, -8192};
+        fake.callback(fake.activeDevice, nullptr, stale, 2);
+        QVERIFY(manager.pauseCapture(started.captureId).accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Paused, 3000);
+        QVERIFY(observer.events.isEmpty());
+
+        QVERIFY(manager.resumeCapture(started.captureId).accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
+        QCOMPARE(fake.deviceStartCalls, 2);
+        QVERIFY(waitForCaptureActivation(manager));
+        const std::int16_t fresh[] = {-4096, 4096};
+        fake.callback(fake.activeDevice, nullptr, fresh, 2);
+        QTRY_COMPARE_WITH_TIMEOUT(observer.events.size(), 1, 3000);
+        const auto event = observer.events.first();
+        QCOMPARE(event.id, started.captureId);
+        QCOMPARE(event.epoch, 1u);
+        QCOMPARE(event.audio.sequence, quint64(0));
+        QCOMPARE(event.audio.pcm, QByteArray(reinterpret_cast<const char*>(fresh), sizeof(fresh)));
+        QVERIFY(manager.stopCapture(started.captureId, StopMode::Drain).accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
+        QCOMPARE(observer.countEnds(AudioSource::Mic, 0), 0);
+        QCOMPARE(observer.countEnds(AudioSource::Mic, 1), 1);
+    }
+
+    void drainCanBeUpgradedToDiscardBeforeDelivery()
+    {
+        using namespace AudioPipline;
+        prepareInput();
+        AudioPiplineManager manager;
+        PcmObserver observer(manager);
+        CaptureConfig config;
+        config.sources = AudioSource::Mic;
+        config.deliverPcm = true;
+        const auto started = manager.startCapture(config);
+        QVERIFY(started.accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
+        QVERIFY(waitForCaptureActivation(manager));
+        const std::int16_t input[] = {3277, 6554};
+        fake.callback(fake.activeDevice, nullptr, input, 2);
+        QVERIFY(manager.stopCapture(started.captureId, StopMode::Drain).accepted);
         QCOMPARE(manager.capture().state, CaptureState::Stopping);
-        QVERIFY(drained.isEmpty());
-        QCOMPARE(manager.queueSnapshot().usedSlots, 1u);
-        const PcmInfo info{header.format, header.frameCount, header.validBytes, header.pcmTimestampNs};
-        QCOMPARE(manager.pcmQueue().commit(*boundary.block, info).status, QueueStatus::Cancelled);
-        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state,
-                                  pause ? CaptureState::Paused : CaptureState::Idle, 3000);
-        if (pause) {
-            QVERIFY(drained.isEmpty());
-            ConvertConsumer consumer(manager, started.captureId);
-            QVERIFY(manager.stopCapture(started.captureId, StopMode::Discard).accepted);
-            QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
-            QVERIFY2(consumer.error.isEmpty(), qPrintable(consumer.error));
-            QCOMPARE(consumer.streamEnds, 1);
-        }
-        QCOMPARE(drained.count(), 1);
-        QCOMPARE(manager.queueSnapshot().state, QueueState::Closed);
+        QVERIFY(manager.stopCapture(started.captureId, StopMode::Discard).accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
+        QVERIFY(observer.events.isEmpty());
+    }
+
+    void levelOnlyCaptureDoesNotDeliverPcm()
+    {
+        using namespace AudioPipline;
+        prepareInput();
+        AudioPiplineManager manager;
+        PcmObserver observer(manager);
+        CaptureConfig config;
+        config.sources = AudioSource::Mic;
+        const auto started = manager.startCapture(config);
+        QVERIFY(started.accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
+        const std::int16_t samples[] = {16384, -16384};
+        QTimer inject;
+        connect(&inject, &QTimer::timeout, this, [&] {
+            fake.callback(fake.activeDevice, nullptr, samples, 2);
+        });
+        inject.start(10);
+        const auto levelVisible = [&] {
+            for (const auto& channel : manager.capture().channels)
+                if (channel.source == AudioSource::Mic && channel.peak == 0.5f) return true;
+            return false;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(levelVisible(), 3000);
+        inject.stop();
+        QVERIFY(manager.stopCapture(started.captureId, StopMode::Drain).accepted);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
+        QVERIFY(observer.events.isEmpty());
     }
 
     void stoppedDeviceFailureCanBeRetried()
@@ -989,6 +990,7 @@ private slots:
         prepareInput();
         AudioPiplineManager manager;
         AudioPipline::CaptureConfig config; config.sources = AudioPipline::AudioSource::Mic;
+        config.deliverPcm = true;
         const auto first = manager.startCapture(config); QVERIFY(first.accepted);
         QTRY_VERIFY_WITH_TIMEOUT(manager.capture().state == AudioPipline::CaptureState::Running || manager.capture().state == AudioPipline::CaptureState::Idle, 3000);
         QVERIFY2(manager.capture().state == AudioPipline::CaptureState::Running, "Capture startup failed");
@@ -1000,20 +1002,18 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(manager.capture().state == AudioPipline::CaptureState::Idle, 3000);
         const auto second = manager.startCapture(config); QVERIFY(second.accepted);
         QSignalSpy issues(&manager, &AudioPiplineManager::issueReported);
-        QSignalSpy updates(&manager, &AudioPiplineManager::queueUpdated);
+        PcmObserver observer(manager);
         QTRY_VERIFY_WITH_TIMEOUT(manager.capture().state == AudioPipline::CaptureState::Running || manager.capture().state == AudioPipline::CaptureState::Idle, 3000);
         QVERIFY2(manager.capture().state == AudioPipline::CaptureState::Running, "Capture startup failed");
         for (const auto& record : issues) {
             const auto issue = qvariant_cast<AudioPipline::AudioIssue>(record.at(0));
             QVERIFY(issue.captureId != second.captureId || issue.error.code != AudioPipline::AudioErrorCode::DeviceDisconnected);
         }
+        QVERIFY(waitForCaptureActivation(manager));
         const std::int16_t samples[] = {3277, -3277}; fake.callback(fake.activeDevice, nullptr, samples, 2);
-        const quint64 revision = manager.queueSnapshot().revision;
-        QTRY_VERIFY([&] {
-            for (const auto& record : updates)
-                if (record.at(0).toString() == second.captureId && record.at(1).toULongLong() >= revision) return true;
-            return false;
-        }());
+        QTRY_COMPARE_WITH_TIMEOUT(observer.events.size(), 1, 3000);
+        QCOMPARE(observer.events.first().id, second.captureId);
+        QCOMPARE(observer.events.first().audio.sequence, quint64(0));
         QVERIFY(manager.stopCapture(second.captureId, AudioPipline::StopMode::Discard).accepted);
         QTRY_VERIFY(manager.capture().state == AudioPipline::CaptureState::Idle);
     }
@@ -1031,7 +1031,6 @@ private slots:
         const auto started = manager.startCapture(config); QVERIFY(started.accepted);
         QTRY_VERIFY_WITH_TIMEOUT(manager.capture().state == AudioPipline::CaptureState::Idle, 3000);
         QCOMPARE(fake.deviceStartCalls, 0);
-        QCOMPARE(manager.queueSnapshot().state, AudioPipline::QueueState::Closed);
     }
 
     void stopFromRunningSignalDoesNotEmitStartedOrReviveCapture()
@@ -1139,7 +1138,6 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
 
         QSignalSpy stopped(&manager, &AudioPiplineManager::captureStopped);
-        QSignalSpy drained(&manager, &AudioPiplineManager::queueDrained);
         QSignalSpy changes(&manager, &AudioPiplineManager::captureChanged);
         stopDelayMs = 300;
         QVERIFY(manager.pauseCapture(started.captureId).accepted);
@@ -1147,12 +1145,8 @@ private slots:
         QVERIFY(manager.stopCapture(started.captureId, StopMode::Discard).accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
 
-        QCOMPARE(manager.queueSnapshot().state, QueueState::Closed);
         QCOMPARE(stopped.count(), 1);
         QCOMPARE(stopped.at(0).at(0).toString(), started.captureId);
-        QCOMPARE(drained.count(), 1);
-        QCOMPARE(drained.at(0).at(0).toString(), started.captureId);
-        QCOMPARE(qvariant_cast<DrainResult>(drained.at(0).at(1)).mode, StopMode::Discard);
         for (const auto& change : changes)
             QVERIFY(qvariant_cast<CaptureSnapshot>(change.at(0)).state != CaptureState::Paused);
     }
@@ -1258,6 +1252,7 @@ private slots:
         AudioPiplineManager manager;
         CaptureConfig config;
         config.sources = AudioSource::Mic;
+        config.deliverPcm = true;
         const auto first = manager.startCapture(config);
         QVERIFY(first.accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Running, 3000);
@@ -1273,6 +1268,7 @@ private slots:
         QVERIFY(startedSignals.isEmpty());
 
         startDelayMs = 0;
+        PcmObserver observer(manager);
         const auto second = manager.startCapture(config);
         QVERIFY(second.accepted);
         QVERIFY(second.captureId != first.captureId);
@@ -1282,9 +1278,12 @@ private slots:
         QCOMPARE(manager.capture().captureId, second.captureId);
         QCOMPARE(startedSignals.count(), 1);
         QCOMPARE(startedSignals.at(0).at(0).toString(), second.captureId);
+        QVERIFY(waitForCaptureActivation(manager));
         const std::int16_t sample = 16384;
         fake.callback(fake.activeDevice, nullptr, &sample, 1);
-        QCOMPARE(manager.queueSnapshot().writeTicket, 1u);
+        QTRY_COMPARE_WITH_TIMEOUT(observer.events.size(), 1, 3000);
+        QCOMPARE(observer.events.first().id, second.captureId);
+        QCOMPARE(observer.events.first().audio.sequence, quint64(0));
         QVERIFY(manager.stopCapture(second.captureId, StopMode::Discard).accepted);
         QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
     }

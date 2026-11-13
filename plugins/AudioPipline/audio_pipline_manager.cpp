@@ -1,4 +1,5 @@
 #include "audio_pipline_manager.h"
+#include "captures/audio_capture_buffer.h"
 #include "captures/audio_capture_context.h"
 
 #include <QMetaObject>
@@ -13,6 +14,7 @@ AudioError error(AudioErrorCode code, const QString& message)
     return {code, message};
 }
 bool contains(AudioSources sources, AudioSource source) { return sources.testFlag(source); }
+std::size_t sourceIndex(AudioSource source) { return source == AudioSource::Mic ? 0 : 1; }
 }
 
 AudioPiplineManager::AudioPiplineManager(QObject* parent)
@@ -64,6 +66,7 @@ void AudioPiplineManager::ensureCaptureWorkers()
         connect(worker, &AudioCaptureWorker::confirmed, this, &AudioPiplineManager::onConfirmed, Qt::QueuedConnection);
         connect(worker, &AudioCaptureWorker::stopped, this, &AudioPiplineManager::onStopped, Qt::QueuedConnection);
         connect(worker, &AudioCaptureWorker::sourceFailed, this, &AudioPiplineManager::onSourceFailed, Qt::QueuedConnection);
+        connect(worker, &AudioCaptureWorker::pcmAvailable, this, &AudioPiplineManager::publishPcm, Qt::QueuedConnection);
         connect(worker, &AudioCaptureWorker::issueReported, this, [this](const AudioIssue& issue) {
             if (issue.captureId == m_captureSnapshot.captureId) emit issueReported(issue);
         }, Qt::QueuedConnection);
@@ -139,48 +142,60 @@ bool AudioPiplineManager::cancelRequest(const RequestId& id)
 }
 void AudioPiplineManager::getDevices() { refreshDevices(); }
 
-SharedPcmQueue& AudioPiplineManager::pcmQueue()
+bool AudioPiplineManager::canPublishPcm() const
 {
-    if (m_pcmQueue) return *m_pcmQueue;
-    m_pcmQueue = std::make_shared<SharedPcmQueue>();
-    connect(m_pcmQueue.get(), &SharedPcmQueue::updated, this, [this](const CaptureId& id, quint64 revision) {
-        if (id == m_captureSnapshot.captureId) emit queueUpdated(id, revision);
-    });
-    connect(m_pcmQueue.get(), &SharedPcmQueue::issueReported, this, [this](const AudioIssue& issue) {
-        if (issue.captureId == m_captureSnapshot.captureId) emit issueReported(issue);
-    });
-    connect(m_pcmQueue.get(), &SharedPcmQueue::segmentFinished, this, [this](const CaptureId& id, std::uint32_t epoch) {
-        // 暂停只在该片段的结束标记和所有持有块都归还后完成；旧片段的通知不能结束新片段。
-        if (id != m_captureSnapshot.captureId || epoch != m_captureSnapshot.epoch ||
-            m_captureSnapshot.state != CaptureState::Stopping || m_stopTarget != StopTarget::Paused || m_pendingStops)
-            return;
-        m_captureSnapshot.state = CaptureState::Paused;
-        emit captureChanged(m_captureSnapshot);
-    });
-    connect(m_pcmQueue.get(), &SharedPcmQueue::drained, this, [this](const CaptureId& id, const DrainResult& result) {
-        if (id != m_captureSnapshot.captureId || m_captureSnapshot.state != CaptureState::Stopping ||
-            m_stopTarget != StopTarget::Idle || m_pendingStops) return;
-        if (!m_queueDrainedEmitted) {
-            m_queueDrainedEmitted = true;
-            emit queueDrained(id, result);
-        }
-        // 外部槽函数可能在通知期间启动嵌套事件循环并改变会话，关闭前再次核对。
-        if (id == m_captureSnapshot.captureId && m_captureSnapshot.state == CaptureState::Stopping)
-            closeDrainedQueue();
-    });
-    return *m_pcmQueue;
+    return m_captureSnapshot.state == CaptureState::Running ||
+        (m_captureSnapshot.state == CaptureState::Stopping && m_stopMode == StopMode::Drain);
 }
+
+void AudioPiplineManager::publishPcm(const CaptureId& id, quint64 generation, AudioSource source)
+{
+    const auto current = [&] {
+        return !m_shuttingDown && id == m_captureSnapshot.captureId && generation == m_pcmGeneration &&
+            m_pcmSources.testFlag(source) && canPublishPcm();
+    };
+    if (!current()) return;
+    const auto buffer = m_pcmBuffers[sourceIndex(source)];
+    const auto epoch = m_captureSnapshot.epoch;
+    CapturedAudio packet;
+    // Leave time for the other source, device control and UI events.
+    for (int n = 0; n < 32 && current() && buffer->tryTake(packet); ++n)
+        emit pcmReady(id, epoch, source, packet);
+    if (current() && buffer->rearmNotification())
+        QMetaObject::invokeMethod(this, [this, id, generation, source] { publishPcm(id, generation, source); },
+                                  Qt::QueuedConnection);
+}
+
+void AudioPiplineManager::finishPcm(AudioSource source)
+{
+    if (!m_pcmSources.testFlag(source) || !canPublishPcm()) return;
+    const auto id = m_captureSnapshot.captureId;
+    const auto generation = m_pcmGeneration;
+    const auto epoch = m_captureSnapshot.epoch;
+    const auto buffer = m_pcmBuffers[sourceIndex(source)];
+    const auto current = [&] {
+        return !m_shuttingDown && id == m_captureSnapshot.captureId && generation == m_pcmGeneration &&
+            m_pcmSources.testFlag(source) && canPublishPcm();
+    };
+    CapturedAudio packet;
+    // The worker's stop acknowledgement guarantees no further writes.
+    while (current() && buffer->tryTake(packet))
+        emit pcmReady(id, epoch, source, packet);
+    if (!current()) return;
+    m_pcmSources.setFlag(source, false);
+    m_pcmBuffers[sourceIndex(source)].reset();
+    emit pcmEnded(id, epoch, source, buffer->takeTrailingDroppedFrames());
+}
+
 EnvironmentSnapshot AudioPiplineManager::environment() const { return m_environment; }
 CaptureSnapshot AudioPiplineManager::capture() const { return m_captureSnapshot; }
-QueueInfo AudioPiplineManager::queueInfo() const { return queueSnapshot().info; }
-QueueSnapshot AudioPiplineManager::queueSnapshot() const { return m_pcmQueue ? m_pcmQueue->snapshot() : QueueSnapshot{}; }
 
 StartResult AudioPiplineManager::startCapture(const CaptureConfig &config)
 {
     if (!m_captureContext->initialized()) return {false, {}, error(AudioErrorCode::BackendStartFailed, QStringLiteral("音频上下文不可用"))};
     if (m_captureSnapshot.state != CaptureState::Idle) return {false, {}, error(AudioErrorCode::Busy, QStringLiteral("已有采集任务"))};
     const auto bits = config.sources.toInt();
-    if (!bits || (bits & ~3) || !config.queue.slotCount || !config.queue.payloadCapacity ||
+    if (!bits || (bits & ~3) ||
         (contains(config.sources, AudioSource::Mic) && config.mic.mode == DeviceSelectionMode::Explicit && config.mic.deviceId.isEmpty()) ||
         (contains(config.sources, AudioSource::Spk) && config.spk.mode == DeviceSelectionMode::Explicit && config.spk.deviceId.isEmpty()))
         return {false, {}, error(AudioErrorCode::InvalidArgument, QStringLiteral("采集配置无效"))};
@@ -194,7 +209,7 @@ StartResult AudioPiplineManager::startCapture(const CaptureConfig &config)
     m_sourceInfos.clear();
     m_faultStops = {};
     m_pendingStops = {};
-    m_captureStartedEmitted = m_captureStoppedEmitted = m_queueDrainedEmitted = false;
+    m_captureStartedEmitted = m_captureStoppedEmitted = m_finishScheduled = false;
     m_levelsDirty = false;
     m_captureOrigin = std::chrono::steady_clock::now();
     for (auto source : {AudioSource::Mic, AudioSource::Spk}) {
@@ -210,14 +225,6 @@ StartResult AudioPiplineManager::startCapture(const CaptureConfig &config)
         if (!isCurrent(id, operation) || m_captureSnapshot.state != CaptureState::Starting) return;
         emit captureChanged(m_captureSnapshot);
         if (!isCurrent(id, operation) || m_captureSnapshot.state != CaptureState::Starting) return;
-        const auto created = pcmQueue().create(m_captureConfig.queue, id, m_captureOrigin);
-        if (created.status != QueueStatus::Ok) {
-            m_captureSnapshot.state = CaptureState::Idle;
-            emit issueReported({id, false, 0, created.error});
-            emit captureChanged(m_captureSnapshot);
-            return;
-        }
-        pcmQueue().resumeEpoch(id, 0, m_captureConfig.sources);
         prepareSources();
     });
     return {true, id, {}};
@@ -226,6 +233,7 @@ StartResult AudioPiplineManager::startCapture(const CaptureConfig &config)
 void AudioPiplineManager::prepareSources()
 {
     ensureCaptureWorkers();
+    m_pcmGeneration = m_operation;
     m_startingSources = m_resumeSources;
     m_pendingStartReplies = m_startingSources;
     m_startPhase = StartPhase::Preparing;
@@ -233,7 +241,9 @@ void AudioPiplineManager::prepareSources()
         if (!contains(m_startingSources, source)) continue;
         AudioCaptureWorker::Preparation command;
         command.selection = source == AudioSource::Mic ? m_captureConfig.mic : m_captureConfig.spk;
-        command.output = {m_pcmQueue, m_captureSnapshot.captureId, m_captureOrigin, m_captureConfig.queue.payloadCapacity, m_operation};
+        auto& buffer = m_pcmBuffers[sourceIndex(source)];
+        if (m_captureConfig.deliverPcm) buffer = std::make_shared<AudioCaptureBuffer>();
+        command.output = {buffer, m_captureSnapshot.captureId, m_captureOrigin, m_pcmGeneration};
         command.resuming = m_captureStartedEmitted;
         emit prepareSourceRequested(source, command);
     }
@@ -252,7 +262,6 @@ void AudioPiplineManager::onPrepared(AudioCaptureWorker::Result result)
     for (auto it = m_sourceInfos.begin(); it != m_sourceInfos.end();)
         if (it->source == source) it = m_sourceInfos.erase(it); else ++it;
     m_sourceInfos.append(result.info);
-    pcmQueue().setSourceFormat(result.captureId, source, result.info.format);
     for (auto& channel : m_captureSnapshot.channels)
         if (channel.source == source) channel.device = result.info.device;
     advanceStartup();
@@ -311,10 +320,11 @@ void AudioPiplineManager::advanceStartup()
     if (!isCurrent(id, operation) || m_captureSnapshot.state != CaptureState::Running) return;
     if (!m_captureStartedEmitted) {
         m_captureStartedEmitted = true;
-        CaptureInfo info{id, m_captureConfig, m_sourceInfos, queueInfo()};
+        CaptureInfo info{id, m_captureConfig, m_sourceInfos};
         emit captureStarted(id, info);
     }
     if (!isCurrent(id, operation) || m_captureSnapshot.state != CaptureState::Running) return;
+    if (m_captureConfig.deliverPcm) m_pcmSources = m_startingSources;
     m_levelTimer->start();
     for (auto source : {AudioSource::Mic, AudioSource::Spk})
         if (contains(m_startingSources, source)) emit activateSourceRequested(source, id, operation);
@@ -340,16 +350,16 @@ void AudioPiplineManager::failStartingSource(const AudioCaptureWorker::Result& r
     // 首次启动必须全部成功，否则整体回滚；已发布会话恢复时可以保留其他来源。
     if (m_captureStartedEmitted) {
         m_faultStops |= source;
-        pcmQueue().seal(result.captureId, AudioSources(source), StopMode::Drain);
+        if (const auto& buffer = m_pcmBuffers[sourceIndex(source)]) buffer->seal();
     }
     // 在通知外部错误前先登记停机，防止槽函数重入后漏停设备或误报启动成功。
     if (!m_captureStartedEmitted || !m_startingSources) {
         stopCapture(result.captureId, StopMode::Discard);
-        emit issueReported({result.captureId, false, 0, result.error});
+        emit issueReported({result.captureId, result.error});
         return;
     }
     emit stopSourceRequested(source, result.captureId, result.operation);
-    emit issueReported({result.captureId, false, 0, result.error});
+    emit issueReported({result.captureId, result.error});
     if (!isCurrent(result.captureId, result.operation) || m_captureSnapshot.state != CaptureState::Starting) return;
     advanceStartup();
 }
@@ -366,14 +376,14 @@ void AudioPiplineManager::onSourceFailed(AudioCaptureWorker::Result result)
     if (!m_captureStartedEmitted) {
         markSourceFailed(source, result.error);
         stopCapture(result.captureId, StopMode::Discard);
-        emit issueReported({result.captureId, false, 0, result.error});
+        emit issueReported({result.captureId, result.error});
         return;
     }
     // 运行中单路故障先封口并保留其他来源；等该 worker 停稳后再补 StreamEnd。
     m_faultStops |= source;
-    pcmQueue().seal(result.captureId, AudioSources(source), StopMode::Drain);
+    if (const auto& buffer = m_pcmBuffers[sourceIndex(source)]) buffer->seal();
     markSourceFailed(source, result.error);
-    emit issueReported({result.captureId, false, 0, result.error});
+    emit issueReported({result.captureId, result.error});
     if (!isCurrent(result.captureId, result.operation) || m_captureSnapshot.state != CaptureState::Running) return;
     emit captureChanged(m_captureSnapshot);
     if (isCurrent(result.captureId, result.operation) && m_captureSnapshot.state == CaptureState::Running && !m_captureSnapshot.runningSources)
@@ -403,13 +413,6 @@ CommandResult AudioPiplineManager::resumeCapture(const CaptureId& id)
         if (!isCurrent(id, operation) || m_captureSnapshot.state != CaptureState::Starting) return;
         emit captureChanged(m_captureSnapshot);
         if (!isCurrent(id, operation) || m_captureSnapshot.state != CaptureState::Starting) return;
-        const auto result = pcmQueue().resumeEpoch(id, m_captureSnapshot.epoch, m_resumeSources);
-        if (result.status != QueueStatus::Ok) {
-            m_captureSnapshot.state = CaptureState::Paused;
-            emit issueReported({id, false, 0, result.error});
-            emit captureChanged(m_captureSnapshot);
-            return;
-        }
         prepareSources();
     });
     return {true, {}};
@@ -421,10 +424,7 @@ CommandResult AudioPiplineManager::stopCapture(const CaptureId& id, StopMode mod
     if (m_captureSnapshot.state == CaptureState::Idle) return {true, {}};
     if (m_captureSnapshot.state == CaptureState::Stopping && m_stopTarget == StopTarget::Idle) {
         // 已受理的 Drain 可以升级为 Discard，不能再退回 Drain。
-        if (mode == StopMode::Discard && m_stopMode == StopMode::Drain) {
-            m_stopMode = mode;
-            if (m_pcmQueue) m_pcmQueue->seal(id, m_captureConfig.sources, mode);
-        }
+        if (mode == StopMode::Discard) m_stopMode = mode;
         if (!m_pendingStops) finishStop();
         return {true, {}};
     }
@@ -440,13 +440,13 @@ void AudioPiplineManager::beginStop(StopTarget target, StopMode mode)
     m_pendingStartReplies = {};
     m_stopTarget = target;
     m_stopMode = mode;
+    m_finishScheduled = false;
     m_pendingStops = m_micWorker ? m_captureConfig.sources : AudioSources{};
     m_captureSnapshot.state = CaptureState::Stopping;
     m_captureSnapshot.runningSources = {};
     m_levelTimer->stop();
-    // 先封口阻止新 PCM，再通知 worker 停机；队列收尾必须等所有来源回执。
-    if (m_pcmQueue && m_pcmQueue->snapshot().state != QueueState::Closed)
-        m_pcmQueue->seal(id, m_captureConfig.sources, mode);
+    for (const auto& buffer : m_pcmBuffers)
+        if (buffer) buffer->seal();
     emit captureChanged(m_captureSnapshot);
     if (!isCurrent(id, operation) || m_captureSnapshot.state != CaptureState::Stopping) return;
     if (!m_pendingStops) { finishStop(); return; }
@@ -458,14 +458,11 @@ void AudioPiplineManager::onStopped(AudioCaptureWorker::Result result)
 {
     if (!isCurrent(result.captureId, result.operation)) return;
     const auto source = result.info.source;
-    // 单路故障可能在停机过程中被暂停/最终停止覆盖，仍要先补该来源的故障尾标。
     if (contains(m_faultStops, source)) {
         m_faultStops.setFlag(source, false);
-        auto reason = AudioErrorCode::DeviceDisconnected;
-        for (const auto& channel : m_captureSnapshot.channels)
-            if (channel.source == source) reason = channel.error.code;
-        pcmQueue().finishSource(result.captureId, source, reason);
+        if (m_captureSnapshot.state == CaptureState::Running) finishPcm(source);
     }
+    if (!isCurrent(result.captureId, result.operation)) return;
     if (m_captureSnapshot.state == CaptureState::Stopping && contains(m_pendingStops, source)) {
         m_pendingStops.setFlag(source, false);
         if (!m_pendingStops) finishStop();
@@ -474,40 +471,32 @@ void AudioPiplineManager::onStopped(AudioCaptureWorker::Result result)
 
 void AudioPiplineManager::finishStop()
 {
-    if (m_pendingStops || m_captureSnapshot.state != CaptureState::Stopping) return;
+    if (m_pendingStops || m_captureSnapshot.state != CaptureState::Stopping || m_finishScheduled) return;
     const auto id = m_captureSnapshot.captureId;
-    if (m_queueDrainedEmitted) { closeDrainedQueue(); return; }
-    if (m_pcmQueue && m_pcmQueue->snapshot().state != QueueState::Closed) {
-        // 从未发布音频的启动回滚不伪造尾标；暂停收 SegmentEnd，最终停止收 StreamEnd。
-        const auto sources = m_captureStartedEmitted
-            ? (m_stopTarget == StopTarget::Paused ? m_resumeSources : m_captureConfig.sources) : AudioSources{};
-        const auto kind = m_stopTarget == StopTarget::Paused ? BlockKind::SegmentEnd : BlockKind::StreamEnd;
-        const auto result = m_pcmQueue->finish(id, sources, kind, m_stopMode);
-        if (result.status != QueueStatus::Ok) { emit issueReported({id, false, 0, result.error}); return; }
-        // 先登记异步收尾再发 captureStopped，槽函数进入嵌套事件循环时队列仍能继续排空。
-        if (m_stopTarget == StopTarget::Idle && !m_captureStoppedEmitted) {
-            m_captureStoppedEmitted = true;
-            emit captureStopped(id);
-        }
-        return;
-    }
+    const auto operation = m_operation;
+    m_finishScheduled = true;
+    // Queue completion before notifying slots that can enter a nested event loop.
+    QMetaObject::invokeMethod(this, [this, id, operation] {
+        if (isCurrent(id, operation)) completeStop();
+    }, Qt::QueuedConnection);
     if (m_stopTarget == StopTarget::Idle && !m_captureStoppedEmitted) {
         m_captureStoppedEmitted = true;
         emit captureStopped(id);
     }
-    if (id != m_captureSnapshot.captureId || m_captureSnapshot.state != CaptureState::Stopping) return;
-    m_captureSnapshot.state = m_stopTarget == StopTarget::Paused ? CaptureState::Paused : CaptureState::Idle;
-    emit captureChanged(m_captureSnapshot);
 }
 
-void AudioPiplineManager::closeDrainedQueue()
+void AudioPiplineManager::completeStop()
 {
-    const auto result = m_pcmQueue->close();
-    if (result.status != QueueStatus::Ok) {
-        emit issueReported({m_captureSnapshot.captureId, false, 0, result.error});
-        return;
+    const auto id = m_captureSnapshot.captureId;
+    const auto operation = m_operation;
+    for (auto source : {AudioSource::Mic, AudioSource::Spk}) {
+        finishPcm(source);
+        if (!isCurrent(id, operation) || m_captureSnapshot.state != CaptureState::Stopping) return;
     }
-    m_captureSnapshot.state = CaptureState::Idle;
+    m_pcmSources = {};
+    m_pcmBuffers = {};
+    m_finishScheduled = false;
+    m_captureSnapshot.state = m_stopTarget == StopTarget::Paused ? CaptureState::Paused : CaptureState::Idle;
     emit captureChanged(m_captureSnapshot);
 }
 

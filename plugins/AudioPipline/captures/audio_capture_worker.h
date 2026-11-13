@@ -8,7 +8,7 @@
 #include <memory>
 
 class AudioCaptureContext;
-namespace AudioPipline { class SharedPcmQueue; }
+namespace AudioPipline { class AudioCaptureBuffer; }
 
 // 每个 worker 只负责一个来源。设备控制在采集控制线程执行，回调在后端线程执行。
 class AudioCaptureWorker : public QObject
@@ -16,11 +16,10 @@ class AudioCaptureWorker : public QObject
     Q_OBJECT
 public:
     struct Output {
-        // 回调持有队列，确保后端延迟停止时不会访问已销毁的队列。
-        std::shared_ptr<AudioPipline::SharedPcmQueue> queue;
+        // 回调持有缓冲，确保后端延迟停止时不会访问已销毁的内存。
+        std::shared_ptr<AudioPipline::AudioCaptureBuffer> buffer;
         AudioPipline::CaptureId captureId;
         std::chrono::steady_clock::time_point origin;
-        std::uint32_t payloadCapacity = 0;
         // 与命令的 operation 相同，用于识别旧会话的迟到回调。
         quint64 generation = 0;
     };
@@ -54,7 +53,6 @@ public:
     void setAccepting(bool accepting);
     bool monitoring() const;
     Level level() const;
-    std::uint64_t takeOverflowFrames();
 
 public slots:
     // 命令按值投递给两个 worker，target 选择来源，id/operation 用来丢弃过期命令。
@@ -80,6 +78,7 @@ signals:
     void stopped(AudioCaptureWorker::Result result);
     void sourceFailed(AudioCaptureWorker::Result result);
     void levelChanged(AudioPipline::CaptureId id, AudioPipline::AudioSource source, float peak, float rms);
+    void pcmAvailable(AudioPipline::CaptureId id, quint64 generation, AudioPipline::AudioSource source);
     void issueReported(AudioPipline::AudioIssue issue);
     void environmentRequestFinished(AudioPipline::RequestId id, AudioPipline::RequestResult result);
 

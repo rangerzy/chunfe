@@ -1,7 +1,7 @@
 #include "audio_capture_worker.h"
 
 #include "audio_capture_context.h"
-#include "../shared_pcm_queue.h"
+#include "audio_capture_buffer.h"
 #include <miniaudio.h>
 #ifdef __APPLE__
 #include "mac_system_capture.h"
@@ -43,7 +43,6 @@ struct AudioCaptureWorker::Impl {
     std::atomic<unsigned> inFlight{0};
     std::atomic<float> peak{0};
     std::atomic<float> rms{0};
-    std::atomic<std::uint64_t> overflowFrames{0};
     // 命令状态和定时器只在控制线程读写；上面的原子字段还会被后端回调访问。
     CaptureId commandId;
     quint64 commandOperation = 0;
@@ -57,8 +56,6 @@ struct AudioCaptureWorker::Impl {
     bool shuttingDown = false;
     QTimer* stopTimer = nullptr;
     QTimer* levelTimer = nullptr;
-    std::uint64_t pendingOverflow = 0;
-    std::chrono::steady_clock::time_point lastOverflowReport{};
 #ifdef __APPLE__
     std::unique_ptr<MacSystemCapture> mac;
 #endif
@@ -103,7 +100,7 @@ struct AudioCaptureWorker::Impl {
     {
         auto* self = static_cast<Impl*>(userdata);
         CallbackGuard callback(self->inFlight);
-        if (!input || !sampleRate || !channels ||
+        if (!input || !frames || sampleRate != captureSampleRate || channels != captureChannels ||
             !self->accepting.load(std::memory_order_acquire) ||
             !self->monitoring.load(std::memory_order_acquire))
             return;
@@ -112,7 +109,7 @@ struct AudioCaptureWorker::Impl {
         double squares = 0;
         const auto sampleCount = std::uint64_t(frames) * channels;
         for (std::uint64_t i = 0; i < sampleCount; ++i) {
-            // 转为归一化浮点数仅用于电平；队列里仍保留原始的 16 位 PCM。
+            // 转为归一化浮点数仅用于电平，音频缓冲保留 16 位 PCM。
             const float sample = float(input[i]) / 32768.0f;
             peak = std::max(peak, std::abs(sample));
             squares += double(sample) * sample;
@@ -120,30 +117,16 @@ struct AudioCaptureWorker::Impl {
         self->peak.store(peak, std::memory_order_relaxed);
         self->rms.store(sampleCount ? float(std::sqrt(squares / sampleCount)) : 0, std::memory_order_relaxed);
 
-        // 后端回调不能等待处理线程；大块按完整帧拆分，队列满则累计丢失帧。
-        const auto bytesPerFrame = std::uint64_t(channels) * sizeof(std::int16_t);
-        if (!self->output.queue || bytesPerFrame > self->output.payloadCapacity)
-            return;
-        const auto maxFrames = std::uint32_t(self->output.payloadCapacity / bytesPerFrame);
+        // 只显示电平的会话不保留 PCM。音频缓冲写入不等待消费者。
+        auto* buffer = self->output.buffer.get();
+        if (!buffer) return;
         const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - self->output.origin).count();
         // macOS 一次输入可能拆成多个输出块；减去尚未处理的输入时长，避免各块时间重叠。
         const auto begin = std::max<std::int64_t>(0, elapsed - std::int64_t(remainingInputNs) -
             std::int64_t(std::uint64_t(frames) * 1000000000ULL / sampleRate));
-        for (std::uint32_t offset = 0; offset < frames &&
-             self->accepting.load(std::memory_order_acquire) &&
-             self->monitoring.load(std::memory_order_acquire);) {
-            const auto count = std::min(maxFrames, frames - offset);
-            PcmInfo pcm;
-            pcm.format = {sampleRate, channels, SampleType::Int16, PcmLayout::Interleaved};
-            pcm.frameCount = count;
-            pcm.validBytes = std::uint32_t(count * bytesPerFrame);
-            pcm.timestampNs = begin + std::int64_t(std::uint64_t(offset) * 1000000000ULL / sampleRate);
-            if (self->output.queue->writeCaptured(self->output.captureId, self->source, pcm,
-                    input + std::uint64_t(offset) * channels) == AcquireStatus::Full)
-                self->overflowFrames.fetch_add(count, std::memory_order_relaxed);
-            offset += count;
-        }
+        if (buffer->write(input, frames, begin))
+            emit self->owner->pcmAvailable(self->output.captureId, self->output.generation, self->source);
     }
 
     static void onData(ma_device* device, void*, const void* input, ma_uint32 frames)
@@ -230,8 +213,7 @@ AudioError AudioCaptureWorker::prepare(const DeviceSelection& selection, const O
 {
     if (!d->context || !d->context->initialized())
         return captureError(AudioErrorCode::BackendStartFailed, QStringLiteral("音频上下文不可用"), d->source);
-    if ((d->source != AudioSource::Mic && d->source != AudioSource::Spk) || !output.queue ||
-        output.captureId.isEmpty() || !output.payloadCapacity)
+    if ((d->source != AudioSource::Mic && d->source != AudioSource::Spk) || output.captureId.isEmpty())
         return captureError(AudioErrorCode::InvalidArgument, QStringLiteral("采集配置无效"), d->source);
 
     std::lock_guard<std::mutex> lock(d->context->backendMutex());
@@ -259,7 +241,6 @@ AudioError AudioCaptureWorker::prepare(const DeviceSelection& selection, const O
     d->accepting.store(false, std::memory_order_release);
     d->monitoring.store(false, std::memory_order_release);
     d->backendStopped.store(false, std::memory_order_release);
-    if (!resuming) d->overflowFrames.store(0, std::memory_order_relaxed);
 
     auto fail = [&](AudioError problem) {
         const auto cleanup = d->stopBackend();
@@ -296,9 +277,8 @@ AudioError AudioCaptureWorker::prepare(const DeviceSelection& selection, const O
         d->initialized = true;
         prepared.format = {d->device.sampleRate, d->device.capture.channels, SampleType::Int16, PcmLayout::Interleaved};
     }
-    if (prepared.format.sampleRate != captureSampleRate || prepared.format.channels != captureChannels ||
-        sizeof(std::int16_t) > output.payloadCapacity)
-        return fail(captureError(AudioErrorCode::UnsupportedFormat, QStringLiteral("设备格式不适合队列"), d->source));
+    if (prepared.format.sampleRate != captureSampleRate || prepared.format.channels != captureChannels)
+        return fail(captureError(AudioErrorCode::UnsupportedFormat, QStringLiteral("设备不支持所需的采集格式"), d->source));
     d->info = prepared;
     return {};
 }
@@ -365,10 +345,6 @@ AudioCaptureWorker::Level AudioCaptureWorker::level() const
 {
     return {d->peak.load(std::memory_order_relaxed), d->rms.load(std::memory_order_relaxed)};
 }
-std::uint64_t AudioCaptureWorker::takeOverflowFrames()
-{
-    return d->overflowFrames.exchange(0, std::memory_order_relaxed);
-}
 
 void AudioCaptureWorker::prepareSource(AudioSource target, Preparation preparation)
 {
@@ -404,10 +380,6 @@ void AudioCaptureWorker::prepareSource(AudioSource target, Preparation preparati
     d->failureSent = false;
     d->stopFinished = false;
     d->stopFailureReported = false;
-    if (!preparation.resuming) {
-        d->pendingOverflow = 0;
-        d->lastOverflowReport = {};
-    }
     if (!d->context) {
         result.error = captureError(AudioErrorCode::BackendStartFailed, QStringLiteral("音频上下文不可用"), d->source);
     } else {
@@ -513,7 +485,7 @@ void AudioCaptureWorker::retryStop()
     if (error.code != AudioErrorCode::None) {
         if (!d->stopFailureReported) {
             d->stopFailureReported = true;
-            emit issueReported({d->commandId, false, 0, error});
+            emit issueReported({d->commandId, error});
         }
         if (d->shuttingDown || !d->stopPending)
             return;
@@ -572,21 +544,8 @@ void AudioCaptureWorker::publishLevel()
 {
     if (d->shuttingDown || d->stopPending || d->stopFinished)
         return;
-    const auto id = d->commandId;
-    const auto operation = d->commandOperation;
     const auto measured = level();
-    emit levelChanged(id, d->source, measured.peak, measured.rms);
-    if (d->shuttingDown || id != d->commandId || operation != d->commandOperation)
-        return;
-    // 电平按定时器发布；溢出帧累计后最多每秒报告一次，避免淹没事件循环。
-    d->pendingOverflow += takeOverflowFrames();
-    const auto now = std::chrono::steady_clock::now();
-    if (d->pendingOverflow && now - d->lastOverflowReport >= std::chrono::seconds(1)) {
-        const auto message = QStringLiteral("音频队列过载，丢失 %1 帧").arg(d->pendingOverflow);
-        d->pendingOverflow = 0;
-        d->lastOverflowReport = now;
-        emit issueReported({id, false, 0, captureError(AudioErrorCode::QueueFull, message, d->source)});
-    }
+    emit levelChanged(d->commandId, d->source, measured.peak, measured.rms);
 }
 
 void AudioCaptureWorker::shutdown()

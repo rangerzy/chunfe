@@ -104,7 +104,7 @@ private slots:
         QCOMPARE(fake.starts[0].sources, AudioSource::Mic | AudioSource::Spk);
         QCOMPARE(fake.starts[0].mic.deviceId, QStringLiteral("mic"));
         QCOMPARE(fake.starts[0].spk.deviceId, QStringLiteral("speaker"));
-        QVERIFY(!fake.starts[0].queue.enabledStages);
+        QVERIFY(!fake.starts[0].deliverPcm);
         snapshot(manager, CaptureState::Running, {channel(AudioSource::Mic, ChannelState::Running, .25f),
                                                   channel(AudioSource::Spk, ChannelState::Running, 1.5f)});
         started(manager);
@@ -347,12 +347,12 @@ private slots:
         AudioLevelTest test(manager);
         test.start(QStringLiteral("mic"), QStringLiteral("speaker"));
         requestFinished(manager, PermissionState::Granted);
-        issue(manager, AudioSource::None, AudioErrorCode::SharedMemoryFailed, QStringLiteral("queue failed"));
+        issue(manager, AudioSource::None, AudioErrorCode::BackendStartFailed, QStringLiteral("capture failed"));
         snapshot(manager, CaptureState::Idle);
         QCOMPARE(fake.starts.size(), 1);
         QVERIFY(!test.active());
-        QCOMPARE(test.microphoneStatus(), QStringLiteral("queue failed"));
-        QCOMPARE(test.systemStatus(), QStringLiteral("queue failed"));
+        QCOMPARE(test.microphoneStatus(), QStringLiteral("capture failed"));
+        QCOMPARE(test.systemStatus(), QStringLiteral("capture failed"));
 
         test.start(QStringLiteral("mic"), QStringLiteral("speaker"));
         requestFinished(manager, PermissionState::Granted);

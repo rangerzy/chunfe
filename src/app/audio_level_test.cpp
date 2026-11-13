@@ -245,7 +245,7 @@ void AudioLevelTest::handleIssue(const AudioIssue& issue)
         }
         return;
     }
-    if (!m_active || issue.error.code == AudioErrorCode::QueueFull) return;
+    if (!m_active) return;
     if (issue.error.code == AudioErrorCode::DeviceDisconnected &&
         issue.error.source != AudioSource::Mic && issue.error.source != AudioSource::Spk) {
         auto message = userMessage(issue.error, AudioSource::None);
@@ -257,7 +257,7 @@ void AudioLevelTest::handleIssue(const AudioIssue& issue)
         return;
     }
     if (issue.error.source == AudioSource::Mic || issue.error.source == AudioSource::Spk) {
-        // 设备断开时整个测试停止；队列过载等提示不等同于采集停止。
+        // 设备断开时整个测试停止，启动时的单路异常交给回滚流程。
         if (!m_hasRun || issue.error.code == AudioErrorCode::DeviceDisconnected) {
             fail(issue.error.source, userMessage(issue.error, issue.error.source));
             if (issue.error.code == AudioErrorCode::DeviceDisconnected) {

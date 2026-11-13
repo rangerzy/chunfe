@@ -1,6 +1,7 @@
 #ifndef CHUNFE_AUDIO_PIPLINE_TYPES_H
 #define CHUNFE_AUDIO_PIPLINE_TYPES_H
 
+#include <QByteArray>
 #include <QFlags>
 #include <QList>
 #include <QMetaType>
@@ -23,26 +24,13 @@ enum class AudioSource : std::uint32_t { None = 0, Mic = 1, Spk = 2 };
 Q_DECLARE_FLAGS(AudioSources, AudioSource)
 Q_DECLARE_OPERATORS_FOR_FLAGS(AudioSources)
 
-// 只记录已完成的阶段；是否正被处理由队列内部的 claimed 标志保护。
-enum class BlockState : std::uint32_t {
-    Free = 0, Captured = 1, Converted = 2, Resampled = 3, ReadyForAsr = 4
-};
-// Draining 表示已封口、仍在处理尾标和剩余块，不代表队列已经关闭。
-enum class QueueState : std::uint32_t { Closed = 0, Open = 1, Draining = 2 };
 enum class CaptureState { Idle, Starting, Running, Paused, Stopping };
 enum class ChannelState { Disabled, Starting, Running, Paused, Failed, Stopped };
-enum class Stage { None, Capture, Convert, Resample, Save, Asr };
-// QueueConfig 用此位集合声明启用的下游阶段，未启用的阶段由队列旁路。
-enum class ProcessingStage : std::uint32_t { Convert = 1, Resample = 2, Save = 4, Asr = 8 };
-Q_DECLARE_FLAGS(ProcessingStages, ProcessingStage)
-Q_DECLARE_OPERATORS_FOR_FLAGS(ProcessingStages)
+enum class Stage { None, Capture };
 enum class StopMode : std::uint32_t { Drain = 0, Discard = 1 };
-enum class BlockKind : std::uint32_t { Audio = 0, SegmentEnd = 1, StreamEnd = 2 };
-enum class BlockFlag : std::uint32_t { Gap = 1, Dropped = 2, Cancelled = 4 };
 enum class SampleType : std::uint32_t { Unknown = 0, Int16 = 1, Int24 = 2, Int32 = 3, Float32 = 4 };
 enum class PcmLayout : std::uint32_t { Unknown = 0, Interleaved = 1, Planar = 2 };
 
-// 可放入共享块的固定宽度结构：小端样本，Planar 为紧密排列的连续平面。
 struct PcmFormat {
     std::uint32_t sampleRate;
     std::uint32_t channels;
@@ -52,11 +40,9 @@ struct PcmFormat {
 
 enum class AudioErrorCode : std::uint32_t {
     None = 0,
-    InvalidArgument, InvalidState, Busy, StaleCapture, StaleBlock,
+    InvalidArgument, InvalidState, Busy, StaleCapture,
     UnsupportedSource, UnsupportedFormat, PermissionDenied,
-    DeviceUnavailable, DeviceDisconnected, QueueFull, BlockTooLarge,
-    ProcessingFailed, StageStalled, BackendStartFailed, BackendStopFailed,
-    SharedMemoryFailed, UnsupportedProtocol
+    DeviceUnavailable, DeviceDisconnected, BackendStartFailed, BackendStopFailed
 };
 
 struct AudioError {
@@ -68,16 +54,7 @@ struct AudioError {
 
 struct AudioIssue {
     CaptureId captureId;
-    bool hasTicket = false;
-    std::uint64_t ticket = 0;
     AudioError error;
-};
-
-struct QueueConfig {
-    std::uint32_t slotCount = 128;
-    std::uint32_t payloadCapacity = 64 * 1024;
-    // Disabled stages are explicitly bypassed; enabled stages always acknowledge each block.
-    ProcessingStages enabledStages{};
 };
 
 enum class DeviceSelectionMode { DefaultAtStart, Explicit };
@@ -90,14 +67,15 @@ struct CaptureConfig {
     AudioSources sources; // 非空；Explicit 设备必须提供 ID。
     DeviceSelection mic;
     DeviceSelection spk;
-    QueueConfig queue;
+    bool deliverPcm = false; // 只测电平时不分配 PCM 缓冲。
 };
 
-struct PcmInfo {
-    PcmFormat format{};
-    std::uint32_t frameCount = 0; // 每声道样本帧数。
-    std::uint32_t validBytes = 0;
-    std::int64_t timestampNs = 0; // 相对本次采集单调时钟起点。
+// 16 kHz、单声道、PCM16LE。序号按来源和采集片段递增，包含被丢弃的块。
+struct CapturedAudio {
+    QByteArray pcm;
+    quint64 sequence = 0;
+    qint64 timestampNs = 0;
+    quint64 droppedFramesBefore = 0;
 };
 
 struct StartResult {
@@ -109,37 +87,6 @@ struct StartResult {
 struct CommandResult {
     bool accepted = false;
     AudioError error;
-};
-
-enum class QueueStatus { Ok, Cancelled, Error };
-struct QueueResult {
-    QueueStatus status = QueueStatus::Error;
-    AudioError error;
-};
-
-// 以下均为进程内值对象，不直接放入共享内存。
-struct QueueInfo {
-    CaptureId captureId;
-    QString ipcKey;
-    std::uint32_t version = 1;
-    std::uint64_t mappedBytes = 0;
-    std::uint32_t slotCount = 0;
-    std::uint32_t payloadCapacity = 0;
-};
-
-struct QueueSnapshot {
-    QueueInfo info;
-    QueueState state = QueueState::Closed;
-    AudioSources acceptingSources;
-    StopMode stopMode = StopMode::Drain;
-    std::uint32_t epoch = 0;
-    std::uint32_t usedSlots = 0;
-    std::uint64_t writeTicket = 0;
-    std::uint64_t stageTicket[4]{};
-    std::uint64_t reclaimTicket = 0;
-    std::uint64_t revision = 0;
-    std::uint64_t droppedSourceFrames[2]{}; // MIC、SPK，按源格式计数。
-    AudioError lastError;
 };
 
 struct DeviceInfo {
@@ -213,7 +160,6 @@ struct CaptureInfo {
     CaptureId captureId;
     CaptureConfig config;
     QList<SourceCaptureInfo> sources;
-    QueueInfo queue;
 };
 
 struct ChannelStatus {
@@ -237,23 +183,13 @@ struct CaptureSnapshot {
     QList<ChannelStatus> channels;
 };
 
-struct DrainResult {
-    StopMode mode = StopMode::Drain;
-    std::uint64_t releasedBlocks = 0;
-    std::uint64_t droppedSourceFrames[2]{};
-    bool cancelled = false;
-    QList<AudioIssue> issues;
-};
-
 } // namespace AudioPipline
 
 Q_DECLARE_METATYPE(AudioPipline::EnvironmentSnapshot)
 Q_DECLARE_METATYPE(AudioPipline::RequestResult)
 Q_DECLARE_METATYPE(AudioPipline::CaptureSnapshot)
 Q_DECLARE_METATYPE(AudioPipline::CaptureInfo)
-Q_DECLARE_METATYPE(AudioPipline::QueueInfo)
-Q_DECLARE_METATYPE(AudioPipline::QueueSnapshot)
-Q_DECLARE_METATYPE(AudioPipline::DrainResult)
+Q_DECLARE_METATYPE(AudioPipline::CapturedAudio)
 Q_DECLARE_METATYPE(AudioPipline::AudioIssue)
 Q_DECLARE_METATYPE(AudioPipline::AudioSource)
 Q_DECLARE_METATYPE(AudioPipline::AudioSources)

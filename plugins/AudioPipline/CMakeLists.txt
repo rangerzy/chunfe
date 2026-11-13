@@ -20,7 +20,7 @@ endif()
 
 add_library(audio_pipline SHARED
     audio_pipline_manager.h audio_pipline_manager.cpp
-    audio_pipline_types.h shared_pcm_queue.h shared_pcm_queue.cpp
+    audio_pipline_types.h captures/audio_capture_buffer.h
     captures/audio_capture_worker.h captures/audio_capture_worker.cpp
     captures/audio_capture_context.h captures/audio_capture_context.cpp
 )

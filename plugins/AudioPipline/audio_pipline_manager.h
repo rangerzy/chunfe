@@ -1,12 +1,12 @@
 #ifndef CHUNFE_AUDIO_PIPLINE_MANAGER_H
 #define CHUNFE_AUDIO_PIPLINE_MANAGER_H
 
-#include "shared_pcm_queue.h"
 #include "captures/audio_capture_worker.h"
 
 #include <QHash>
 #include <QObject>
 #include <QThread>
+#include <array>
 #include <chrono>
 #include <memory>
 
@@ -33,11 +33,8 @@ public:
     AudioPipline::CommandResult resumeCapture(const AudioPipline::CaptureId& id);
     AudioPipline::CommandResult stopCapture(const AudioPipline::CaptureId& id, AudioPipline::StopMode mode);
 
-    AudioPipline::SharedPcmQueue& pcmQueue();
     AudioPipline::EnvironmentSnapshot environment() const;
     AudioPipline::CaptureSnapshot capture() const;
-    AudioPipline::QueueInfo queueInfo() const;
-    AudioPipline::QueueSnapshot queueSnapshot() const;
     void startCapture(CaptureModel mode);
     void stopCapture();
     void getDevices();
@@ -47,10 +44,13 @@ signals:
     void requestFinished(const AudioPipline::RequestId& id, const AudioPipline::RequestResult& result);
     void captureChanged(const AudioPipline::CaptureSnapshot& capture);
     void captureStarted(const AudioPipline::CaptureId& id, const AudioPipline::CaptureInfo& info);
-    // captureStopped 表示采集端已停；queueDrained 表示所需结束标记已处理、队列已排空。
+    // captureStopped 表示设备已停。Drain 交付已接收的 PCM 后按来源发出 pcmEnded，
+    // 然后进入 Idle。Discard（含暂停）撤销当前片段，不发 pcmEnded。
     void captureStopped(const AudioPipline::CaptureId& id);
-    void queueUpdated(const AudioPipline::CaptureId& id, quint64 revision);
-    void queueDrained(const AudioPipline::CaptureId& id, const AudioPipline::DrainResult& result);
+    void pcmReady(const AudioPipline::CaptureId& id, std::uint32_t epoch, AudioPipline::AudioSource source,
+                  const AudioPipline::CapturedAudio& packet);
+    void pcmEnded(const AudioPipline::CaptureId& id, std::uint32_t epoch, AudioPipline::AudioSource source,
+                  std::uint64_t trailingDroppedFrames);
     void issueReported(const AudioPipline::AudioIssue& issue);
 
     // 命令按值跨线程发送；worker 不读取 manager 的会话状态。
@@ -80,13 +80,16 @@ private:
     void markSourceFailed(AudioPipline::AudioSource source, const AudioPipline::AudioError& error);
     void beginStop(StopTarget target, AudioPipline::StopMode mode);
     void finishStop();
-    void closeDrainedQueue();
+    void completeStop();
+    void publishPcm(const AudioPipline::CaptureId& id, quint64 generation, AudioPipline::AudioSource source);
+    bool canPublishPcm() const;
+    void finishPcm(AudioPipline::AudioSource source);
     void publishEnvironment(AudioPipline::EnvironmentSnapshot environment);
     void onEnvironmentResult(AudioPipline::RequestId id, AudioPipline::RequestResult result);
 
     // 两个单来源 worker 共用设备控制线程；线程结束时释放 worker QObject。
     std::shared_ptr<AudioCaptureContext> m_captureContext;
-    std::shared_ptr<AudioPipline::SharedPcmQueue> m_pcmQueue;
+    std::array<std::shared_ptr<AudioPipline::AudioCaptureBuffer>, 2> m_pcmBuffers;
     QThread m_captureThread;
     AudioCaptureWorker* m_micWorker = nullptr;
     AudioCaptureWorker* m_spkWorker = nullptr;
@@ -100,13 +103,15 @@ private:
     std::chrono::steady_clock::time_point m_captureOrigin;
 
     // 仅 manager 线程修改会话；operation 区分同一 captureId 下的启动、恢复和停止。
-    // 与之不同，snapshot.epoch 标识暂停恢复后的音频片段，供队列和结果归属使用。
+    // pcmGeneration 在设备停止排空前保持不变，epoch 标识暂停恢复后的音频片段。
     quint64 m_operation = 0;
+    quint64 m_pcmGeneration = 0;
+    AudioPipline::AudioSources m_pcmSources;
     StartPhase m_startPhase = StartPhase::None;
     AudioPipline::AudioSources m_startingSources;
     AudioPipline::AudioSources m_pendingStartReplies;
     // resumeSources 是恢复时仍可用的来源；pendingStops 等待整体停机回执，
-    // faultStops 等待单路故障停稳后补上该来源的 StreamEnd。
+    // faultStops 等待单路故障停稳后交付剩余 PCM。
     AudioPipline::AudioSources m_resumeSources;
     AudioPipline::AudioSources m_pendingStops;
     AudioPipline::AudioSources m_faultStops;
@@ -114,7 +119,7 @@ private:
     AudioPipline::StopMode m_stopMode = AudioPipline::StopMode::Discard;
     bool m_captureStartedEmitted = false;
     bool m_captureStoppedEmitted = false;
-    bool m_queueDrainedEmitted = false;
+    bool m_finishScheduled = false;
     bool m_levelsDirty = false;
     bool m_shuttingDown = false;
 };

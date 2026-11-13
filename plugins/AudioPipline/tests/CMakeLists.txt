@@ -6,8 +6,6 @@ qt_add_executable(audio_pipline_manager_tests
     ../../../src/app/audio_level_test.h
     ../audio_pipline_manager.cpp
     ../audio_pipline_manager.h
-    ../shared_pcm_queue.cpp
-    ../shared_pcm_queue.h
     ../captures/audio_capture_worker.cpp
     ../captures/audio_capture_worker.h
     ../captures/audio_capture_context.cpp
@@ -27,10 +25,9 @@ endif()
 cf_log_configure_target(audio_pipline_manager_tests audio_pipline)
 add_test(NAME audio_pipline_manager_tests COMMAND audio_pipline_manager_tests)
 
-qt_add_executable(shared_pcm_queue_tests shared_pcm_queue_tests.cpp)
-set_target_properties(shared_pcm_queue_tests PROPERTIES AUTOMOC ON)
-target_link_libraries(shared_pcm_queue_tests PRIVATE audio_pipline Qt6::Test)
-add_test(NAME shared_pcm_queue_tests COMMAND shared_pcm_queue_tests)
+qt_add_executable(audio_capture_buffer_tests audio_capture_buffer_tests.cpp)
+target_link_libraries(audio_capture_buffer_tests PRIVATE Qt6::Test)
+add_test(NAME audio_capture_buffer_tests COMMAND audio_capture_buffer_tests)
 
 if(APPLE)
     add_executable(miniaudio_coreaudio_enumeration_tests miniaudio_coreaudio_enumeration_tests.c)
