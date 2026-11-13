@@ -9,9 +9,12 @@ PageFrame {
     required property var controller
     property var audioDevices: null
     property var audioLevelTest: null
+    property var offlineTranscription: null
+    property bool pendingTranscriptionStart: false
     property bool deviceSelectorsReady: false
     maximumContentWidth: 640
-    readonly property string engineLabel: controller.engineStatus === "ready" ? qsTr("转写就绪") : controller.engineStatus === "starting" ? qsTr("正在启动") : controller.engineStatus === "error" ? qsTr("启动失败") : qsTr("引擎未启动")
+    readonly property string engineStatus: offlineTranscription ? offlineTranscription.engineStatus : controller.engineStatus
+    readonly property string engineLabel: engineStatus === "ready" ? qsTr("转写就绪") : engineStatus === "starting" ? qsTr("正在启动") : engineStatus === "error" ? qsTr("启动失败") : qsTr("引擎未启动")
     Component.onCompleted: {
         deviceSelectorsReady = true
         syncDeviceSelection()
@@ -20,8 +23,22 @@ PageFrame {
     }
     Component.onDestruction: {
         deviceSelectorsReady = false
+        pendingTranscriptionStart = false
         if (audioLevelTest)
             audioLevelTest.stop()
+    }
+    function openTranscriptionWhenCaptureFree() {
+        if (!pendingTranscriptionStart || !offlineTranscription || !audioLevelTest || audioLevelTest.active || audioLevelTest.stopping)
+            return
+        pendingTranscriptionStart = false
+        offlineTranscription.open()
+    }
+    Connections {
+        target: root.audioLevelTest
+        ignoreUnknownSignals: true
+        function onChanged() { root.openTranscriptionWhenCaptureFree() }
+        function onStoppingChanged() { root.openTranscriptionWhenCaptureFree() }
+        function onActiveChanged() { root.openTranscriptionWhenCaptureFree() }
     }
     function refreshDevices() {
         if (audioDevices)
@@ -30,6 +47,8 @@ PageFrame {
     function syncDeviceSelection() {
         if (deviceSelectorsReady && audioLevelTest)
             audioLevelTest.setDevices(microphoneInput.selectedDeviceId, systemInput.selectedDeviceId)
+        if (deviceSelectorsReady && offlineTranscription)
+            offlineTranscription.setDevices(microphoneInput.selectedDeviceId, systemInput.selectedDeviceId)
     }
     function scheduleDeviceSelectionSync() {
         // 两路列表可能在同一轮同时更新；合并后再通知测试控制器，避免中间状态。
@@ -106,16 +125,25 @@ PageFrame {
                 }
                 AppButton {
                     objectName: "testTranscriptionButton"
-                    text: qsTr("测试转写（演示）")
+                    text: root.offlineTranscription ? qsTr("测试转写") : qsTr("测试转写（演示）")
                     variant: "secondary"
-                    onClicked: root.controller.transcriptionTest.open()
+                    enabled: !root.offlineTranscription || root.engineStatus === "ready"
+                    onClicked: {
+                        if (root.offlineTranscription) {
+                            if (root.audioLevelTest && (root.audioLevelTest.active || root.audioLevelTest.stopping)) {
+                                root.pendingTranscriptionStart = true
+                                root.audioLevelTest.stop()
+                                root.openTranscriptionWhenCaptureFree()
+                            } else root.offlineTranscription.open()
+                        } else root.controller.transcriptionTest.open()
+                    }
                 }
                 AppButton {
                     objectName: "engineActionButton"
-                    text: root.controller.engineStatus === "ready" ? qsTr("停止引擎") : root.controller.engineStatus === "starting" ? qsTr("正在启动…") : qsTr("启动引擎")
-                    variant: root.controller.engineStatus === "ready" ? "secondary" : "primary"
-                    enabled: root.controller.engineStatus !== "starting"
-                    onClicked: root.controller.toggleEngine()
+                    text: root.offlineTranscription ? qsTr("引擎配置") : root.engineStatus === "ready" ? qsTr("停止引擎") : root.engineStatus === "starting" ? qsTr("正在启动…") : qsTr("启动引擎")
+                    variant: root.engineStatus === "ready" ? "secondary" : "primary"
+                    enabled: root.offlineTranscription || root.engineStatus !== "starting"
+                    onClicked: root.offlineTranscription ? (root.controller.route = "offline") : root.controller.toggleEngine()
                 }
             }
         }

@@ -1,9 +1,9 @@
 find_package(Qt6 6.12 REQUIRED COMPONENTS Multimedia)
-qt_add_executable(Chunfe main.cpp audio_device_list.h audio_device_list.cpp audio_level_test.h audio_level_test.cpp)
+qt_add_executable(Chunfe main.cpp audio_device_list.h audio_device_list.cpp audio_level_test.h audio_level_test.cpp offline_transcription_controller.h offline_transcription_controller.cpp)
 cf_log_configure_target(Chunfe app)
 target_compile_features(Chunfe PRIVATE cxx_std_23)
 target_link_libraries(Chunfe PRIVATE
-    Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia chunfe_fonts chunfe_gui chunfe_guiplugin audio_pipline
+    Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia chunfe_fonts chunfe_gui chunfe_guiplugin audio_pipline offline_transcription
 )
 
 if(CHUNFE_BUILD_TESTS)
@@ -24,6 +24,33 @@ if(CHUNFE_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../../plugins/AudioPipline")
     target_link_libraries(audio_level_test_tests PRIVATE Qt6::Test)
     add_test(NAME audio_level_test_tests COMMAND audio_level_test_tests)
+
+    qt_add_executable(offline_transcription_controller_tests
+        tests/offline_transcription_controller_tests.cpp offline_transcription_controller.h offline_transcription_controller.cpp)
+    target_compile_features(offline_transcription_controller_tests PRIVATE cxx_std_23)
+    target_include_directories(offline_transcription_controller_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(offline_transcription_controller_tests PRIVATE Qt6::Test audio_pipline offline_transcription)
+    add_test(NAME offline_transcription_controller_tests COMMAND offline_transcription_controller_tests)
+
+    qt_add_executable(offline_transcription_lifecycle_tests
+        tests/offline_transcription_lifecycle_tests.cpp offline_transcription_controller.h offline_transcription_controller.cpp)
+    target_compile_features(offline_transcription_lifecycle_tests PRIVATE cxx_std_23)
+    target_include_directories(offline_transcription_lifecycle_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(offline_transcription_lifecycle_tests PRIVATE Qt6::Test audio_pipline offline_transcription)
+    target_compile_definitions(offline_transcription_lifecycle_tests PRIVATE FAKE_RUNTIME_PATH="$<TARGET_FILE:offline_fake_runtime>")
+    add_dependencies(offline_transcription_lifecycle_tests offline_fake_runtime)
+    chunfe_deploy_offline_runtime(offline_transcription_lifecycle_tests)
+    add_test(NAME offline_transcription_lifecycle_tests COMMAND offline_transcription_lifecycle_tests)
+
+    qt_add_executable(offline_transcription_soak_tests
+        tests/offline_transcription_soak_tests.cpp offline_transcription_controller.h offline_transcription_controller.cpp)
+    target_compile_features(offline_transcription_soak_tests PRIVATE cxx_std_23)
+    target_include_directories(offline_transcription_soak_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(offline_transcription_soak_tests PRIVATE Qt6::Test Qt6::Quick audio_pipline offline_transcription)
+    chunfe_deploy_offline_runtime(offline_transcription_soak_tests)
+    add_test(NAME offline_transcription_soak_tests COMMAND offline_transcription_soak_tests)
+    set_tests_properties(offline_transcription_soak_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     if(APPLE)
         add_executable(macos_bundle_localization_tests tests/macos_bundle_localization_tests.mm)
@@ -55,6 +82,7 @@ set_target_properties(Chunfe PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     FOLDER qtc_runnable
 )
+chunfe_deploy_offline_runtime(Chunfe)
 
 install(TARGETS Chunfe
     BUNDLE DESTINATION .
@@ -88,10 +116,13 @@ if(APPLE)
         VERBATIM)
     # Keep the project's shared library inside the application bundle.  Install
     # it before Qt's deploy script so macdeployqt can resolve its dependencies.
-    set_target_properties(audio_pipline PROPERTIES INSTALL_NAME_DIR "@rpath")
+    set_target_properties(audio_pipline offline_transcription PROPERTIES INSTALL_NAME_DIR "@rpath")
     set_property(TARGET Chunfe APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")
-    install(TARGETS audio_pipline
+    install(TARGETS audio_pipline offline_transcription
         LIBRARY DESTINATION "Chunfe.app/Contents/Frameworks")
+    chunfe_install_offline_runtime("Chunfe.app/Contents/Frameworks"
+        "Chunfe.app/Contents/Resources/licenses/audio.cpp"
+        "Chunfe.app/Contents/Resources/offline-transcription")
     # Install the SVG image plugin before macdeployqt, then let the deploy tool
     # fix its Qt framework references as an additional binary.
     install(PROGRAMS "$<TARGET_FILE:Qt6::QSvgPlugin>"
@@ -115,10 +146,14 @@ elseif(WIN32)
     set_source_files_properties("${chunfe_windows_resources}"
         PROPERTIES OBJECT_DEPENDS "${CHUNFE_APP_ICON}")
     target_sources(Chunfe PRIVATE "${chunfe_windows_resources}")
-    install(TARGETS audio_pipline RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS audio_pipline offline_transcription RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    chunfe_install_offline_runtime("${CMAKE_INSTALL_BINDIR}"
+        "${CMAKE_INSTALL_BINDIR}/licenses/audio.cpp" "${CMAKE_INSTALL_BINDIR}")
 elseif(UNIX)
     set_property(TARGET Chunfe APPEND PROPERTY INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
-    install(TARGETS audio_pipline LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(TARGETS audio_pipline offline_transcription LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    chunfe_install_offline_runtime("${CMAKE_INSTALL_LIBDIR}/chunfe"
+        "${CMAKE_INSTALL_DATADIR}/licenses/audio.cpp" "${CMAKE_INSTALL_LIBDIR}/chunfe")
     # Linux uses the Qt libraries supplied by the KDE Flatpak runtime.
     install(FILES "${CMAKE_BINARY_DIR}/version.txt"
         DESTINATION ${CMAKE_INSTALL_DATADIR}/chunfe)

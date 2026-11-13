@@ -13,6 +13,8 @@ ApplicationWindow {
     objectName: "mainWindow"
     property var audioDevices: null
     property var audioLevelTest: null
+    property var offlineTranscription: null
+    readonly property var transcriptionTest: offlineTranscription || demo.transcriptionTest
     readonly property alias demoController: demo
     readonly property alias transcriptVisible: transcriptWindow.visible
     readonly property alias answerVisible: answerWindow.visible
@@ -25,7 +27,7 @@ ApplicationWindow {
     title: qsTr("春风")
     color: Theme.background
     font.pixelSize: 14
-    onClosing: { demo.transcriptionTest.close(); demo.cancelChecks(); Qt.quit() }
+    onClosing: { transcriptionTest.close(); demo.cancelChecks(); Qt.quit() }
 
     function positionInterviewWindows() {
         const available = Qt.rect(window.screen.virtualX, window.screen.virtualY, window.screen.width, window.screen.height)
@@ -39,7 +41,7 @@ ApplicationWindow {
 
     DemoController {
         id: demo
-        onInterviewStarted: window.positionInterviewWindows()
+        onInterviewStarted: { window.transcriptionTest.close(); window.positionInterviewWindows() }
         onInterviewFinished: { window.show(); window.raise(); window.requestActivate() }
         onNotification: function(message) { toastLabel.text = message; toast.visible = true; toastTimer.restart() }
         onPreflightVisibleChanged: { if (preflightVisible) checks.open(); else checks.close() }
@@ -60,6 +62,7 @@ ApplicationWindow {
             background: backgroundPage,
             model: modelPage,
             audio: audioPage,
+            offline: offlinePage,
             history: historyPage,
             record: recordPage,
             about: aboutPage
@@ -68,13 +71,25 @@ ApplicationWindow {
     Component { id: homePage; HomePage { controller: demo } }
     Component { id: backgroundPage; BackgroundPage { controller: demo } }
     Component { id: modelPage; ModelPage { controller: demo } }
-    Component { id: audioPage; AudioPage { controller: demo; audioDevices: window.audioDevices; audioLevelTest: window.audioLevelTest } }
+    Component { id: audioPage; AudioPage { controller: demo; audioDevices: window.audioDevices; audioLevelTest: window.audioLevelTest; offlineTranscription: window.offlineTranscription } }
+    Component { id: offlinePage; OfflineTranscriptionPage { controller: window.offlineTranscription } }
     Component { id: historyPage; HistoryPage { controller: demo } }
     Component { id: recordPage; RecordPage { controller: demo } }
     Component { id: aboutPage; AboutPage {} }
 
     PreflightDialog { id: checks; objectName: "preflightDialog"; anchors.centerIn: Overlay.overlay; controller: demo }
-    TranscriptionTestDialog { anchors.centerIn: Overlay.overlay; controller: demo.transcriptionTest }
+    TranscriptionTestDialog { anchors.centerIn: Overlay.overlay; controller: window.transcriptionTest }
+    Connections {
+        target: demo
+        function onRouteChanged() {
+            if (demo.route !== "audio" && window.offlineTranscription)
+                window.offlineTranscription.close()
+        }
+        function onPreflightVisibleChanged() {
+            if (demo.preflightVisible && window.offlineTranscription)
+                window.offlineTranscription.close()
+        }
+    }
 
     Rectangle {
         id: toast

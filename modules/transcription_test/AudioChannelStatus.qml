@@ -30,8 +30,9 @@ Item {
             Layout.fillWidth: true
             spacing: 3
             Text {
+                objectName: "audioTestChannelLabel"
                 Layout.fillWidth: true
-                text: root.channel + " · " + root.channelName
+                text: root.channel
                 textFormat: Text.PlainText
                 color: Theme.text
                 font.pixelSize: 14

@@ -7,7 +7,7 @@ qt_add_qml_module(chunfe_gui
         mock/DemoController.qml mock/DemoData.js mock/TranscriptionTestController.qml
         shell/Sidebar.qml shell/NavItem.qml shell/PreflightDialog.qml shell/TranscriptionTestDialog.qml
         pages/HomePage.qml pages/BackgroundPage.qml pages/ModelPage.qml
-        pages/AudioPage.qml pages/HistoryPage.qml pages/RecordPage.qml pages/AboutPage.qml
+        pages/AudioPage.qml pages/OfflineTranscriptionPage.qml pages/HistoryPage.qml pages/RecordPage.qml pages/AboutPage.qml
         pages/PageFrame.qml pages/FormCard.qml pages/FieldLabel.qml pages/SelectField.qml
     DEPENDENCIES QtQuick QtQuick.Controls.Basic QtQuick.Layouts Chunfe.Ui Chunfe.Transcript Chunfe.Answer Chunfe.AudioTest
 )

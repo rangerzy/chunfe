@@ -27,6 +27,7 @@ endif()
 add_subdirectory(3party/miniaudio)
 add_subdirectory(modules)
 add_subdirectory(plugins/AudioPipline)
+add_subdirectory(plugins/OfflineTranscription)
 add_subdirectory(resources/fonts)
 add_subdirectory(src)
 

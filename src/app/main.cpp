@@ -1,6 +1,7 @@
 #include "app_fonts.h"
 #include "audio_device_list.h"
 #include "audio_level_test.h"
+#include "offline_transcription_controller.h"
 #include "cf_log.h"
 
 #include <QGuiApplication>
@@ -19,6 +20,8 @@ int main(int argc, char *argv[])
     if (!qEnvironmentVariableIsSet("QSG_DISTANCEFIELD_ANTIALIASING"))
         qputenv("QSG_DISTANCEFIELD_ANTIALIASING", "gray");
     QGuiApplication app(argc, argv);
+    QCoreApplication::setOrganizationName(QStringLiteral("rangerzy"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("io.github.rangerzy"));
     QCoreApplication::setApplicationName(QStringLiteral("Chunfe"));
     QCoreApplication::setApplicationVersion(QStringLiteral(CHUNFE_VERSION));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("春风"));
@@ -35,10 +38,12 @@ int main(int argc, char *argv[])
     AudioPiplineManager audioManager;
     AudioDeviceList audioDevices(audioManager);
     AudioLevelTest audioLevelTest(audioManager);
+    OfflineTranscriptionController offlineTranscription(audioManager);
 
     QQmlApplicationEngine engine;
     engine.setInitialProperties({{QStringLiteral("audioDevices"), QVariant::fromValue(&audioDevices)},
-                                 {QStringLiteral("audioLevelTest"), QVariant::fromValue(&audioLevelTest)}});
+                                 {QStringLiteral("audioLevelTest"), QVariant::fromValue(&audioLevelTest)},
+                                 {QStringLiteral("offlineTranscription"), QVariant::fromValue(&offlineTranscription)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("Chunfe", "Main");

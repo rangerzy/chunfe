@@ -1,0 +1,11 @@
+# Offline transcription third-party notices
+
+The pinned audio.cpp C ABI runtime is Apache-2.0. Its upstream source is https://github.com/0xShug0/audio.cpp at commit 047fb4243914583e23c41d37f28185f0ebfe1bba (ABI 0.3.0). The bundled macOS arm64 runtime provenance and hash are recorded in lib/macos/arm64/artifact.json. The unmodified ABI header is vendor/audio.cpp/audiocpp.h. The runtime includes the selected Qwen3 ASR implementation and upstream statically linked support code; it is not a header-only dependency.
+
+Included upstream license texts cover audio.cpp, ggml, llama.cpp tokenizer code, cJSON, libyaml, lz4, utf8proc, SentencePiece and its bundled Abseil, darts-clone, esaxx and protobuf-lite dependencies. Source for the exact versions is available in the pinned audio.cpp repository. The bundled macOS build uses Apple's system Metal and Accelerate frameworks and embedded Metal shader source. No independent FFmpeg, ONNX Runtime or CUDA library is required.
+
+This checkout does not contain Windows or Linux audio.cpp runtime binaries. When preparing a Windows Vulkan package, include the applicable Vulkan and SPIR-V header notices for that build, along with its runtime provenance. The operating system or graphics driver supplies `vulkan-1.dll`; it must not be copied from System32. Qwen3 ASR requires GPU inference. Silero speech detection runs on the CPU.
+
+The Qwen3 ASR model is an external file selected by the user. The application includes the Silero Team's MIT-licensed 16 kHz speech detection weights, with the license in `licenses/SileroVAD.txt`. The `models/silero_vad_16k.safetensors` file comes from `assets/framework/models/silero_vad/` in the pinned audio.cpp source. It is 1,239,748 bytes with SHA-256 `c59271c284ae9c8335d795d60e0bfdb71aaaceec578d9bd9ffc1b8153c319ea1`.
+
+Any Microsoft Visual C++ runtime components supplied with a future Windows package, such as msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll and vcomp140.dll, are NOT covered by the open-source licenses above. Redistribution is subject to the applicable Microsoft Visual Studio license and REDIST list: https://learn.microsoft.com/visualstudio/releases/2022/redistribution. Windows system/UCRT components are provided by the operating system; system DLLs must not be copied from System32.

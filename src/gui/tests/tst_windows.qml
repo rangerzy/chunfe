@@ -64,6 +64,36 @@ TestCase {
         }
     }
     Component { id: factory; Main { audioDevices: fakeAudioDevices; audioLevelTest: fakeAudioLevelTest } }
+    QtObject {
+        id: fakeOffline
+        property string modelPath: ""
+        property string engineStatus: "stopped"
+        property string engineError: ""
+        property int loadCount: 0
+        property bool opened: false
+        property string status: "idle"
+        property string elapsedText: "00:00"
+        property string spkDevice: ""
+        property string micDevice: ""
+        property string spkState: "waiting"
+        property string micState: "waiting"
+        property real spkLevel: 0
+        property real micLevel: 0
+        property var lines: []
+        property string errorMessage: ""
+        property string selectedMic: ""
+        property string selectedSpk: ""
+        function saveModelPath(model) { modelPath = model }
+        function loadEngine() { loadCount++; engineStatus = "ready" }
+        function unloadEngine() { engineStatus = "stopped" }
+        function setDevices(mic, spk) { selectedMic = mic; selectedSpk = spk }
+        function pathFromUrl(url) { return String(url) }
+        function open() { opened = true }
+        function close() { opened = false }
+        function stop() {}
+        function restart() {}
+    }
+    Component { id: realFactory; Main { audioDevices: fakeAudioDevices; audioLevelTest: fakeAudioLevelTest; offlineTranscription: fakeOffline } }
     property var app
     function init() {
         failOnWarning(/Binding loop detected/)
@@ -81,6 +111,183 @@ TestCase {
         verify(app !== null)
     }
     function cleanup() { app.demoController.cancelChecks(); app.demoController.finishInterview(); app.destroy() }
+    function test_offlineSettingsSaveAndLoadAreSeparate() {
+        fakeOffline.modelPath = ""
+        fakeOffline.engineStatus = "stopped"
+        fakeOffline.loadCount = 0
+        const realApp = createTemporaryObject(realFactory, null)
+        verify(realApp !== null)
+        realApp.demoController.route = "offline"
+        const model = findChild(realApp, "offlineModelField")
+        verify(model !== null)
+        compare(findChild(realApp, "offlineRuntimeField"), null)
+        const loadButton = findChild(realApp, "offlineLoadButton")
+        verify(!loadButton.enabled)
+        model.text = "  "
+        verify(!loadButton.enabled)
+        model.text = "  /models/asr.gguf  "
+        verify(!loadButton.enabled)
+        const settingsPage = findChild(realApp, "pageLoader").item
+        wait(50)
+        settingsPage.contentY = Math.max(0, settingsPage.contentHeight - settingsPage.height)
+        wait(50)
+        mouseClick(findChild(realApp, "offlineSaveButton"))
+        compare(fakeOffline.modelPath, "/models/asr.gguf")
+        compare(fakeOffline.loadCount, 0)
+        verify(loadButton.enabled)
+        mouseClick(loadButton)
+        compare(fakeOffline.loadCount, 1)
+        compare(fakeOffline.engineStatus, "ready")
+        model.text = "/models/other.gguf"
+        verify(loadButton.enabled) // A changed model must not prevent unloading the current one.
+        mouseClick(loadButton)
+        compare(fakeOffline.engineStatus, "stopped")
+        verify(!loadButton.enabled)
+        model.text = ""
+        mouseClick(findChild(realApp, "offlineSaveButton"))
+        compare(fakeOffline.modelPath, "")
+        verify(!loadButton.enabled)
+        realApp.destroy()
+    }
+    function test_realTranscriptionWaitsForAudioCaptureToStop() {
+        fakeOffline.engineStatus = "ready"
+        fakeOffline.opened = false
+        fakeAudioLevelTest.reset()
+        const realApp = createTemporaryObject(realFactory, null)
+        verify(realApp !== null)
+        realApp.demoController.route = "audio"
+        const button = findChild(realApp, "testTranscriptionButton")
+        verify(button !== null)
+        tryCompare(fakeOffline, "selectedMic", "mic-a")
+        compare(fakeOffline.selectedSpk, "spk-b")
+        fakeAudioLevelTest.active = true
+        mouseClick(button)
+        verify(!fakeOffline.opened)
+        verify(fakeAudioLevelTest.stopping)
+        fakeAudioLevelTest.finishStop()
+        tryCompare(fakeOffline, "opened", true)
+        fakeOffline.close()
+        realApp.destroy()
+    }
+    function test_realTranscriptionCapsuleUpdatesInPlace() {
+        fakeOffline.engineStatus = "ready"
+        fakeOffline.opened = false
+        fakeOffline.status = "running"
+        fakeOffline.lines = []
+        const realApp = createTemporaryObject(realFactory, null)
+        verify(realApp !== null)
+        realApp.demoController.route = "audio"
+        fakeOffline.open()
+        fakeOffline.lines = [{id: "one", source: "mic", time: "00:01", text: "你好", final: false}]
+        const dialog = findChild(realApp, "transcriptionTestDialog")
+        const list = findChild(dialog, "audioTestTranscript")
+        tryCompare(list, "count", 1)
+        tryVerify(function() { return list.itemAtIndex(0) !== null })
+        const row = list.itemAtIndex(0)
+        const capsule = findChild(row, "transcriptCapsule")
+        verify(capsule !== null)
+        compare(capsule.isComplete, false)
+        compare(capsule.isIncomplete, false)
+        fakeOffline.lines = [{id: "one", source: "mic", time: "00:01", text: "你好世界", final: true}]
+        tryCompare(capsule, "isComplete", true)
+        compare(list.itemAtIndex(0), row)
+        fakeOffline.lines = [{id: "one", source: "mic", time: "00:01", text: "你好世界", final: false, incomplete: true}]
+        tryCompare(capsule, "isIncomplete", true)
+        verify(findChild(capsule, "transcriptCapsuleText").text.indexOf("未完成") >= 0)
+        fakeOffline.close()
+        realApp.destroy()
+    }
+    function test_realTranscriptionAlignsSourcesInTimeOrder() {
+        fakeOffline.engineStatus = "ready"
+        fakeOffline.opened = false
+        fakeOffline.status = "running"
+        fakeOffline.lines = []
+        const realApp = createTemporaryObject(realFactory, null, {width: 760, height: 520})
+        verify(realApp !== null)
+        realApp.demoController.route = "audio"
+        fakeOffline.open()
+        fakeOffline.lines = [
+            {id: "first", source: "mic", time: "00:01", final: true,
+             text: "这段麦克风文字用来检查长句在统一的正文栏内换行后，是否保留时间和清楚可见的来源标签。"},
+            {id: "second", source: "spk", time: "00:02", final: true,
+             text: "这段系统声音文字用来检查长句在统一的正文栏内换行后，是否保留时间和清楚可见的来源标签。"},
+            {id: "third", source: "mic", time: "00:03", final: true, text: "下一句。"}
+        ]
+        const dialog = findChild(realApp, "transcriptionTestDialog")
+        const list = findChild(dialog, "audioTestTranscript")
+        tryCompare(list, "count", 3)
+        const micChannel = findChild(dialog, "micTestChannel")
+        const spkChannel = findChild(dialog, "spkTestChannel")
+        verify(micChannel !== null && spkChannel !== null)
+        const micChannelLabel = findChild(micChannel, "audioTestChannelLabel")
+        const spkChannelLabel = findChild(spkChannel, "audioTestChannelLabel")
+        verify(micChannelLabel !== null && spkChannelLabel !== null)
+        compare(micChannelLabel.text, "MIC")
+        compare(spkChannelLabel.text, "SPK")
+        list.following = false
+        list.positionViewAtBeginning()
+        tryVerify(function() { return list.itemAtIndex(0) !== null && list.itemAtIndex(1) !== null })
+        compare(list.model.get(0).lineTime, "00:01")
+        compare(list.model.get(1).lineTime, "00:02")
+        compare(list.model.get(2).lineTime, "00:03")
+
+        const micRow = list.itemAtIndex(0)
+        const spkRow = list.itemAtIndex(1)
+        const mic = findChild(micRow, "transcriptCapsule")
+        const spk = findChild(spkRow, "transcriptCapsule")
+        compare(micRow.source, "MIC")
+        compare(spkRow.source, "SPK")
+        verify(mic !== null && spk !== null)
+        compare(mic.x, spk.x)
+        compare(mic.color, spk.color)
+        const micMeta = findChild(micRow, "transcriptSourceMeta")
+        const spkMeta = findChild(spkRow, "transcriptSourceMeta")
+        verify(micMeta !== null && spkMeta !== null)
+        compare(micMeta.x, spkMeta.x)
+        compare(micMeta.width, spkMeta.width)
+        verify(mic.x >= micMeta.x + micMeta.width)
+        compare(findChild(micMeta, "transcriptSourceIcon").name, "mic")
+        compare(findChild(spkMeta, "transcriptSourceIcon").name, "headphones")
+        compare(findChild(micMeta, "transcriptSourceLabel").text, "MIC")
+        compare(findChild(spkMeta, "transcriptSourceLabel").text, "SPK")
+        verify(mic.isComplete && spk.isComplete)
+        verify(findChild(mic, "transcriptCapsuleText").lineCount > 1)
+        verify(findChild(spk, "transcriptCapsuleText").lineCount > 1)
+        const history = fakeOffline.lines.slice()
+        for (let i = 0; i < 12; ++i)
+            history.push({id: "extra-" + i, source: i % 2 ? "mic" : "spk", time: "00:04",
+                          final: true, text: "历史转写。"})
+        fakeOffline.lines = history
+        const latest = findChild(dialog, "audioTestLatestButton")
+        tryCompare(latest, "visible", true)
+        mouseClick(latest)
+        tryCompare(list, "atYEnd", true)
+        compare(list.following, true)
+        if (testArtifactDirectory) {
+            fakeOffline.spkDevice = "MacBook Air 扬声器"
+            fakeOffline.micDevice = "MacBook Air 麦克风"
+            fakeOffline.spkLevel = 0.42
+            fakeOffline.micLevel = 0.24
+            fakeOffline.elapsedText = "00:16"
+            fakeOffline.lines = [
+                {id: "first", source: "mic", time: "00:01", final: true, text: "我们先确认一下今天讨论的内容。"},
+                {id: "second", source: "spk", time: "00:05", final: false, incomplete: true, text: "接下来核对时间和安排。"},
+                {id: "third", source: "mic", time: "00:12", final: false, text: "好的，我这边可以清楚地听到。"}
+            ]
+            tryCompare(list.model.get(1), "incomplete", true)
+            tryCompare(list, "count", 3)
+            wait(120) // Let the animated level bars settle for the screenshot.
+            waitForRendering(realApp.contentItem)
+            grabImage(realApp.contentItem).save(testArtifactDirectory + "/transcription-timeline-minimum.png")
+            fakeOffline.spkDevice = ""
+            fakeOffline.micDevice = ""
+            fakeOffline.spkLevel = 0
+            fakeOffline.micLevel = 0
+            fakeOffline.elapsedText = "00:00"
+        }
+        fakeOffline.close()
+        realApp.destroy()
+    }
     function test_aboutPageShowsIntroductionAndVersion() {
         const entry = findChild(app, "navAbout")
         verify(entry !== null)

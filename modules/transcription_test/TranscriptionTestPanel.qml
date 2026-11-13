@@ -19,7 +19,7 @@ Item {
     property var lines: []
     property string errorMessage: ""
     readonly property bool active: status === "starting" || status === "running"
-    readonly property string statusText: status === "running" ? qsTr("测试中") : status === "starting" ? qsTr("正在启动引擎") : status === "error" ? qsTr("测试异常") : status === "stopped" ? qsTr("已停止") : qsTr("等待测试")
+    readonly property string statusText: status === "running" ? qsTr("测试中") : status === "starting" ? qsTr("正在启动") : status === "stopping" ? qsTr("正在收尾") : status === "error" ? qsTr("测试异常") : status === "stopped" ? qsTr("已停止") : qsTr("等待测试")
     property bool initialized: false
 
     signal stopRequested
@@ -60,7 +60,8 @@ Item {
                 source: line.source === "mic" ? "MIC" : "SPK",
                 lineTime: String(line.time || ""),
                 contentText: String(line.text || ""),
-                complete: line.final !== false
+                complete: line.final !== false,
+                incomplete: line.incomplete === true
             };
             if (i < transcriptModel.count && transcriptModel.get(i).entryId !== value.entryId)
                 transcriptModel.remove(i, transcriptModel.count - i);
@@ -168,37 +169,72 @@ Item {
                     required property string lineTime
                     required property string contentText
                     required property bool complete
+                    required property bool incomplete
+                    readonly property bool isMic: source === "MIC"
                     width: Math.max(0, transcript.width - 10)
-                    implicitHeight: Math.max(24, words.y + words.implicitHeight)
+                    implicitHeight: bubble.height
                     height: implicitHeight
                     Accessible.role: Accessible.ListItem
                     Accessible.name: source + "，" + lineTime + "，" + contentText
 
-                    StatusBadge {
-                        id: sourceLabel
-                        text: line.source
+                    Column {
+                        id: metadata
+                        objectName: "transcriptSourceMeta"
+                        y: 8
+                        width: 56
+                        spacing: 3
+
+                        Row {
+                            spacing: 5
+
+                            AppIcon {
+                                objectName: "transcriptSourceIcon"
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: line.isMic ? "mic" : "headphones"
+                                size: 14
+                                color: Theme.muted
+                            }
+                            Text {
+                                objectName: "transcriptSourceLabel"
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: line.source
+                                color: Theme.text
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                        Text {
+                            x: 19
+                            text: line.lineTime
+                            textFormat: Text.PlainText
+                            color: Theme.muted
+                            font.pixelSize: 11
+                        }
                     }
-                    Text {
-                        id: timeLabel
-                        x: sourceLabel.width + 10
-                        y: 3
-                        width: 42
-                        text: line.lineTime
-                        textFormat: Text.PlainText
-                        color: Theme.muted
-                        font.pixelSize: 12
-                    }
-                    Text {
-                        id: words
-                        x: timeLabel.x + timeLabel.width + 10
-                        y: 2
-                        width: Math.max(0, line.width - x)
-                        text: line.contentText
-                        textFormat: Text.PlainText
-                        color: line.complete ? Theme.text : Theme.muted
-                        font.pixelSize: 14
-                        wrapMode: Text.Wrap
-                        lineHeight: 1.35
+                    Rectangle {
+                        id: bubble
+                        objectName: "transcriptCapsule"
+                        property bool isIncomplete: line.incomplete
+                        property bool isComplete: line.complete
+                        anchors.left: metadata.right
+                        anchors.leftMargin: 8
+                        width: Math.min(Math.max(0, line.width - x), words.implicitWidth + 24)
+                        height: Math.max(metadata.y + metadata.height, words.implicitHeight + 18)
+                        radius: Theme.radius
+                        color: line.incomplete ? "#fff3e5" : Theme.hover
+                        Text {
+                            id: words
+                            objectName: "transcriptCapsuleText"
+                            x: 12
+                            y: 9
+                            width: Math.max(0, parent.width - 24)
+                            text: line.contentText + (line.incomplete ? qsTr("（未完成）") : "")
+                            textFormat: Text.PlainText
+                            color: line.complete ? Theme.text : Theme.muted
+                            font.pixelSize: 14
+                            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                            lineHeight: 1.35
+                        }
                     }
                 }
             }
@@ -254,7 +290,7 @@ Item {
             AppButton {
                 objectName: "audioTestRestartButton"
                 text: qsTr("重新测试")
-                enabled: root.status !== "starting"
+                enabled: root.status !== "starting" && root.status !== "stopping"
                 onClicked: {
                     transcript.following = true;
                     root.restartRequested();
