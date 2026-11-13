@@ -118,7 +118,15 @@ PageFrame {
                 Layout.fillWidth: true
                 spacing: 12
                 StatusBadge {
+                    id: engineBadge
                     text: root.engineLabel
+                }
+                Connections {
+                    target: root.offlineTranscription ? null : root.controller
+                    function onEngineStatusChanged() {
+                        if (root.controller.engineStatus === "ready")
+                            engineBadge.Accessible.announce(qsTr("转写引擎已就绪。"));
+                    }
                 }
                 Item {
                     Layout.fillWidth: true

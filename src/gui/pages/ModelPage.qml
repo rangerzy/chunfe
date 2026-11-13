@@ -10,6 +10,14 @@ PageFrame {
     maximumContentWidth: 640
     property bool keyVisible: false
 
+    function connectionMessage(status: string): string {
+        if (status === "testing")
+            return qsTr("正在测试连接…");
+        if (status === "connected")
+            return qsTr("连接成功");
+        return qsTr("连接失败，请检查配置后重试。");
+    }
+
     PageHeader {
         Layout.fillWidth: true
         title: qsTr("模型连接")
@@ -75,11 +83,20 @@ PageFrame {
             label: qsTr("连接状态")
             minimumHeight: 24
             Label {
+                id: connectionResult
                 Layout.fillWidth: true
-                text: root.controller.connectionStatus === "testing" ? qsTr("正在测试连接…") : root.controller.connectionStatus === "connected" ? qsTr("连接成功") : qsTr("连接失败，请检查配置后重试。")
+                text: root.connectionMessage(root.controller.connectionStatus)
                 color: Theme.text
                 wrapMode: Text.Wrap
                 font.pixelSize: 12
+            }
+            Connections {
+                target: root.controller
+                function onConnectionStatusChanged() {
+                    const status = root.controller.connectionStatus;
+                    if (status !== "idle" && status !== "testing")
+                        connectionResult.Accessible.announce(root.connectionMessage(status));
+                }
             }
         }
         Rectangle {
@@ -98,10 +115,7 @@ PageFrame {
                 variant: "secondary"
                 text: root.controller.connectionStatus === "testing" ? qsTr("正在测试…") : qsTr("测试连接")
                 enabled: root.controller.connectionStatus !== "testing" && endpoint.text.trim().length > 0 && model.text.trim().length > 0
-                onClicked: {
-                    root.controller.saveModel(endpoint.text, key.text, model.text);
-                    root.controller.testConnection();
-                }
+                onClicked: root.controller.testConnection(endpoint.text, key.text, model.text)
             }
             AppButton {
                 objectName: "saveModelButton"

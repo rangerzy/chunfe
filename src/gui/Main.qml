@@ -43,7 +43,7 @@ ApplicationWindow {
         id: demo
         onInterviewStarted: { window.transcriptionTest.close(); window.positionInterviewWindows() }
         onInterviewFinished: { window.show(); window.raise(); window.requestActivate() }
-        onNotification: function(message) { toastLabel.text = message; toast.visible = true; toastTimer.restart() }
+        onNotification: function(message, severity) { toast.showNotification(message, severity) }
         onPreflightVisibleChanged: { if (preflightVisible) checks.open(); else checks.close() }
     }
 
@@ -91,17 +91,15 @@ ApplicationWindow {
         }
     }
 
-    Rectangle {
+    NotificationToast {
         id: toast
-        visible: false; z: 30
+        objectName: "notificationToast"
+        z: 30
         anchors.horizontalCenter: pageLoader.horizontalCenter
-        anchors.bottom: parent.bottom; anchors.bottomMargin: 18
-        width: Math.min(toastLabel.implicitWidth + 40, pageLoader.width - 48)
-        height: toastLabel.implicitHeight + 26
-        color: "#18181b"; radius: 8
-        Text { id: toastLabel; x: 20; y: 13; width: parent.width - 40; color: "#fafafa"; font.pixelSize: 12; wrapMode: Text.Wrap }
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 20
+        maximumWidth: Math.min(480, pageLoader.width - 40)
     }
-    Timer { id: toastTimer; interval: 3600; onTriggered: toast.visible = false }
 
     Window {
         id: transcriptWindow

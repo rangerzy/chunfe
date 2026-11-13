@@ -64,12 +64,12 @@ QtObject {
         onStartEngineRequested: root.startEngine()
     }
 
-    signal notification(string message)
+    signal notification(string message, string severity)
     signal interviewStarted
     signal interviewFinished
 
-    function notify(message: string) {
-        notification(message);
+    function notify(message: string, severity: string) {
+        notification(message, severity);
     }
     function formatTime(seconds: int): string {
         return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
@@ -78,38 +78,44 @@ QtObject {
         backgroundText = text.trim();
         backgroundDraft = backgroundText;
         backgroundName = backgroundText ? "背景资料.md" : "";
-        notify("背景已保存。");
+        notify(qsTr("背景已保存。"), "success");
     }
     function importMockBackground() {
         backgroundDraft = Data.background();
-        notify("背景已导入，请保存。");
+        notify(qsTr("背景已导入，请保存。"), "info");
     }
     function clearBackground() {
         backgroundText = "";
         backgroundDraft = "";
         backgroundName = "";
-        notify("背景已清空。");
+        notify(qsTr("背景已清空。"), "success");
     }
-    function saveModel(endpoint: string, key: string, model: string) {
+    function applyModel(endpoint: string, key: string, model: string): bool {
         if (!endpoint.trim() || !model.trim()) {
-            notify("请填写 API 地址和模型名称。");
-            return;
+            notify(qsTr("请填写 API 地址和模型名称。"), "error");
+            return false;
         }
         apiEndpoint = endpoint.trim();
         apiKey = key;
         modelName = model.trim();
         connectionStatus = "idle";
         connectionTimer.stop();
-        notify("模型配置已保存。");
+        return true;
     }
-    function testConnection() {
+    function saveModel(endpoint: string, key: string, model: string) {
+        if (applyModel(endpoint, key, model))
+            notify(qsTr("模型配置已保存。"), "success");
+    }
+    function testConnection(endpoint: string, key: string, model: string) {
+        if (!applyModel(endpoint, key, model))
+            return;
         connectionStatus = "testing";
         connectionTimer.restart();
     }
     function saveAudio(system: string, mic: string) {
         systemDevice = system;
         microphone = mic;
-        notify("音频设备已更新。");
+        notify(qsTr("音频设备已更新。"), "success");
     }
     function startEngine() {
         if (engineStatus === "starting" || engineStatus === "ready")
@@ -133,7 +139,7 @@ QtObject {
     }
     function renameRecord(id: string, title: string) {
         if (!title.trim()) {
-            notify("名称不能为空。");
+            notify(qsTr("名称不能为空。"), "error");
             return;
         }
         records = records.map(function (item) {
@@ -141,7 +147,7 @@ QtObject {
                 title: title.trim()
             }) : item;
         });
-        notify("名称已更新。");
+        notify(qsTr("名称已更新。"), "success");
     }
     function deleteRecord(id: string) {
         records = records.filter(function (item) {
@@ -151,13 +157,13 @@ QtObject {
             selectedRecordId = "";
             route = "history";
         }
-        notify("记录已删除。");
+        notify(qsTr("记录已删除。"), "success");
     }
     function exportRecord(id: string) {
         if (records.some(function (item) {
             return item.id === id;
         }))
-            notify("Markdown 内容已准备。");
+            notify(qsTr("Markdown 内容已准备。"), "info");
     }
     function startChecks() {
         if (interviewActive)
@@ -322,7 +328,7 @@ QtObject {
         pendingQuestion = "";
         pendingTriggerKind = "";
         interviewFinished();
-        notify("对话已结束。");
+        notify(qsTr("对话已结束。"), "success");
     }
 
     property Timer checkTimer: Timer {
@@ -334,7 +340,8 @@ QtObject {
         interval: 850
         onTriggered: {
             root.connectionStatus = "connected";
-            root.notify("连接成功。");
+            if (root.route !== "model")
+                root.notify(qsTr("连接成功。"), "success");
         }
     }
     property Timer engineTimer: Timer {
@@ -343,7 +350,8 @@ QtObject {
             if (root.engineStatus !== "starting")
                 return;
             root.engineStatus = "ready";
-            root.notify("转写引擎已就绪。");
+            if (root.route !== "audio")
+                root.notify(qsTr("转写引擎已就绪。"), "success");
         }
     }
     property Timer sessionTimer: Timer {
