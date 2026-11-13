@@ -31,7 +31,8 @@ Button {
         Behavior on color { ColorAnimation { duration: 120 } }
     }
 
-    ToolTip.visible: hovered && text !== ""
-    ToolTip.delay: 700
-    ToolTip.text: text
+    AppToolTip {
+        trigger: root
+        text: root.text
+    }
 }

@@ -67,18 +67,21 @@ PageFrame {
                     {
                         icon: "model",
                         label: qsTr("模型"),
+                        action: qsTr("配置模型"),
                         value: root.controller.modelName || qsTr("未配置模型"),
                         route: "model"
                     },
                     {
                         icon: "audio",
                         label: qsTr("实时转写"),
+                        action: qsTr("打开音频与转写设置"),
                         value: root.controller.engineStatus === "ready" ? qsTr("转写就绪") : root.controller.engineStatus === "starting" ? qsTr("转写启动中") : qsTr("转写未启动"),
                         route: "audio"
                     },
                     {
                         icon: "file",
                         label: qsTr("背景资料"),
+                        action: qsTr("编辑背景资料"),
                         value: root.controller.backgroundText ? qsTr("背景已配置") : qsTr("未设置背景"),
                         route: "background"
                     }
@@ -92,10 +95,13 @@ PageFrame {
                     rightPadding: 10
                     hoverEnabled: true
                     Accessible.name: modelData.label + "，" + modelData.value
+                    Accessible.description: modelData.action
                     onClicked: root.controller.route = modelData.route
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 650
-                    ToolTip.text: modelData.label + " · " + modelData.value
+                    AppToolTip {
+                        trigger: statusButton
+                        text: statusButton.modelData.action
+                              + (statusValue.truncated ? "\n" + statusButton.modelData.value : "")
+                    }
                     background: Rectangle {
                         radius: Theme.radius
                         color: statusButton.hovered ? Theme.hover : "transparent"
@@ -115,6 +121,7 @@ PageFrame {
                             color: Theme.muted
                         }
                         Text {
+                            id: statusValue
                             Layout.fillWidth: true
                             text: statusButton.modelData.value
                             font.pixelSize: 12
