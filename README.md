@@ -8,9 +8,37 @@
 
 ## 当前阶段
 
-当前默认版本为 `0.1.0.0`。根工程提供 **Qt 6.12 原生页面与交互演示**，涵盖首页、背景资料、模型连接、音频与转写、对话记录与详情，以及显示应用简介和构建版本的「关于我们」页面。开始对话后主窗隐藏，只显示可拖动、置顶的对话条和回应建议窗口；结束或关闭任一悬浮窗后恢复本次记录。问题、请求和异议各提供首次全文流式建议，普通陈述只进入转写且不打断已有建议；不提供手动补题、修正、重新生成、代码示例或固定队列。
+当前默认版本为 `0.1.0.0`。根工程提供 **Qt 6.12 原生桌面应用**，涵盖首页、背景资料、模型连接、音频与转写、对话记录与详情，以及「关于我们」页面。加载离线引擎后可开始正式对话。开始后主窗隐藏，置顶对话条实时转写，左侧为 SPK 系统声音，右侧为 MIC 麦克风。对话条可拖动、暂停和收起。
 
-会话资料和记录保存在当前进程内存中，退出后恢复示例数据。背景保存后在本次运行的多场会话中复用，各场记录保留独立快照。导入、导出、模型连接测试以及正式对话的转写和回应建议仍使用演示数据；离线引擎配置和转写测试使用真实音频与本地引擎。`prototypes/interview-assistant/` 保留网页设计参考，原生应用从根工程启动。
+配置 DeepSeek 后，正式对话开始时会准备模型、API Key 和本次背景快照。对方（SPK）的定稿转写进入判断，常见寒暄和附和语会在本地跳过。需要判断的内容会连同背景和最近的双路转写发给 DeepSeek，对方确有问题、请求或异议时，建议会在「回应建议」悬浮窗流式显示。MIC 只补充上下文。
+
+正式对话的提示词位于 `chunfeng/config.ini` 的 `[conversationAdvice]` 节下。应用会自动补入缺少的 `prompt`，并在每场对话开始时重新读取。保留 `{{background}}` 和 `{{context}}`，发送请求时会分别填入本次背景快照，以及当前 SPK 发言和近期双路转写。可用 `\n` 换行。应用会附加流式输出格式。
+
+```ini
+[conversationAdvice]
+prompt="给出两句以内能直接说出口的回应，先说结论。信息不足时，先问一个具体的澄清问题。\n\n背景资料：\n{{background}}\n\n当前对话上下文：\n{{context}}"
+```
+
+结束正式对话时，应用等待离线转写收尾，然后将双路文字转写、回应建议和本次背景快照写入偏好目录下的 `chunfeng/conversations.sqlite`。macOS 路径为 `~/Library/Preferences/chunfeng/conversations.sqlite`。已开始显示的建议如果中途结束，会以未完成状态保存。重启后可在「对话记录」中查看以往对话，重命名和删除也会写回 SQLite。`prototypes/interview-assistant/` 保留网页交互演示。
+
+「背景资料」可导入一份 UTF-8 Markdown（`.md` 或 `.markdown`，最多 256 KiB），原文可选中复制。导入成功后将副本保存至 `chunfeng/background.md`，并在下次启动时自动载入。成功导入新文件会替换当前资料，取消或导入失败会保留当前资料。
+
+点击「AI 分析」会使用已保存的模型和 API Key，把当前 Markdown 原文发送给 DeepSeek。结果边生成边显示，可选中复制，也可停止生成。默认提示词要求只输出带编号的面试追问，最多 6 题，每题一行且不超过 60 字。
+
+`chunfeng/config.ini` 的 `[backgroundAnalysis]` 节下，`prompt` 是可编辑的分析提示词。应用会在每次分析时重读该项，并将 `{{background}}` 替换为当前 Markdown 原文。保留占位符才能发起分析。可用 `\n` 表示换行，删除 `prompt` 项会恢复默认提示词。
+
+```ini
+[backgroundAnalysis]
+prompt="根据下方资料，只输出带编号的面试追问。最多 6 题，每题一行且不超过 60 字。\n\n{{background}}"
+```
+
+「模型连接」使用 DeepSeek 官方 API。API Key 编辑结束或离开页面后自动保存，选择 `deepseek-flash`（默认）或 `deepseek-v4-pro` 后立即保存。首次保存或更换 API Key 后，应用会带上已保存的 Key 请求 `GET https://api.deepseek.com/models`，只读取模型列表。点击「测试连接」可刷新检测结果。最近一次完成的结果会自动保存，API 地址和 Key 相同时，重启后在模型连接页和首页显示上次结果。 [DeepSeek 获取模型列表](https://api-docs.deepseek.com/zh-cn/api/list-models/)
+
+保存 API Key 后，点击「测试对话」可用当前已保存的模型开启一段测试会话。底部输入消息，按 Enter 或点击发送按钮，上方实时显示模型回复。Shift+Enter 换行。连续追问会带上本次已完成的问答。关闭弹窗会结束这段测试会话。
+
+春风在系统的用户偏好目录下使用 `chunfeng` 作为数据目录。macOS 的配置文件为 `~/Library/Preferences/chunfeng/config.ini`，保存所选模型、API Key、最近一次完成的连接检测结果和上次成功加载的离线转写模型路径。API Key 以明文存储，输入框默认遮挡显示。清空 API Key 并离开输入框会移除 Key 和对应检测结果。首页的转写状态取决于引擎是否已经加载，背景状态取决于已保存的正文。
+
+新版启动时迁移这三项现有偏好，已有的 `config.ini` 值优先。确认 INI 保存成功后，应用清理旧位置中的对应配置项。背景文件和 SQLite 对话库也使用 `chunfeng` 目录。
 
 新增可复用模块：`modules/ui_controls`（`Chunfe.Ui`，Neutral 控件与主题）、`modules/interview_transcript`（`Chunfe.Transcript`，左右字幕胶囊）、`modules/answer_panel`（`Chunfe.Answer`，首次回应建议全文）。展示模块只接收属性、发出交互信号，字幕与建议复用 `TextBlock`。`src/gui/pages` 存放应用页面，`src/gui/shell` 存放导航与检查弹窗，`src/gui/mock` 管理独立的内存示例状态，`Main.qml` 负责三个窗口的生命周期。
 
@@ -26,11 +54,11 @@
 
 页面只显示功能性文案，mock 边界说明集中在本 README。浅色辅助文字采用 `#52525b`，常规文字14px、字幕/回答正文15px；浮窗文字不随暂停降低透明度。
 
-主窗默认 820 × 560，最小 760 × 520，可自由调整大小，切换页面保持窗口尺寸。首页采用居中的图标、标题、短开始按钮与三项横排状态入口；设置页使用 `SettingRow` 统一标签、控件及说明的对齐，去掉外层大框，通过间距和细分隔线分组，背景资料保留整行编辑区。长内容在页面内滚动。`prototypes/interview-assistant/` 同步这套布局与当前功能范围。
+主窗默认 820 × 560，最小 760 × 520，可自由调整大小，切换页面保持窗口尺寸。首页采用居中的图标、标题、短开始按钮与三项横排状态入口；设置页使用 `SettingRow` 统一标签、控件及说明的对齐，通过间距和细分隔线分组。背景资料页保留独立的原文预览区和分析结果区，长内容可以滚动查看。
 
 「音频与转写」列出可用的麦克风和系统声音设备。「测试收音」使用选中的设备采集音频并显示实时电平，停止测试或离开页面时释放设备。各平台支持的音频来源见采集模块说明。[音频采集模块](plugins/AudioPipline/README.md)
 
-audio.cpp 动态库随应用打包并自动定位。「离线转写」页只需输入或选择兼容的 Qwen3-ASR GGUF 模型文件，保存路径后手动加载引擎；应用不会自动下载模型。旧版本保存的动态库路径不再使用。macOS 使用 Metal，Windows 使用 Vulkan；GPU 初始化失败时显示错误，不回退 CPU。加载后的引擎在关闭测试弹窗后保持就绪，退出应用或手动卸载时释放。各平台运行库的打包要求见[离线转写插件说明](plugins/OfflineTranscription/README.md)。
+audio.cpp 动态库随应用打包并自动定位。在「离线转写」页输入或选择兼容的 Qwen3-ASR GGUF 模型文件，再点击「加载模型」。成功后应用会记住路径，每次启动时仍需手动加载。应用不会自动下载模型。旧版本保存的动态库路径不再使用。macOS 使用 Metal，Windows 使用 Vulkan；GPU 初始化失败时显示错误，不回退 CPU。加载后的引擎在关闭测试弹窗后保持就绪，退出应用或手动卸载时释放。各平台运行库的打包要求见[离线转写插件说明](plugins/OfflineTranscription/README.md)。
 
 「音频与转写」中的转写测试使用所选系统声音和麦克风实时识别，分别显示音量和逐句胶囊。离线转写用内置语音活动检测（VAD）判断各路说话何时结束。确认语音结束后，先识别尾音，再定稿该路胶囊。连续说话时按已确认的句末标点分句。停止测试会等待尾音，超时保留已有结果并标记未完成。重新测试会清空结果，关闭弹窗会结束测试。测试内容不写入对话记录，也不触发回应建议。实际延迟和识别效果取决于模型与设备。
 
@@ -109,7 +137,7 @@ TextBlock {
 
 ## 开发环境
 
-- Qt **6.12+**，主应用需要 Qt Quick、Qt Quick Controls、Qt Multimedia 和 Qt SVG；示例需要 Qt Quick 和 Qt Quick Controls，独立 `text_block` 模块只需要 Qt Quick 及其基础库。macOS / Windows CI 固定使用 `6.12.0`。
+- Qt **6.12+**，主应用需要 Qt Quick、Qt Quick Controls、Qt Multimedia、Qt SVG 和 Qt Network；示例需要 Qt Quick 和 Qt Quick Controls，独立 `text_block` 模块只需要 Qt Quick 及其基础库。macOS / Windows CI 固定使用 `6.12.0`。
 - 支持 **C++23** 的编译器。
 - CMake **4.3.6+**、Ninja。
 - macOS 使用 Apple Clang；Windows 使用 Qt 配套的 MinGW x64；Linux Flatpak 使用 KDE SDK 中的编译器。
