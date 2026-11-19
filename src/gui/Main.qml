@@ -284,7 +284,6 @@ ApplicationWindow {
             collapsed: demo.transcriptCollapsed
             elapsedText: demo.elapsedText
             statusText: demo.isDemo ? qsTr("春风正在聆听") : demo.nativeConversationStatus
-            logoSource: "qrc:/branding/chunfe-mark.svg"
             onPauseRequested: demo.togglePause()
             onCollapseRequested: demo.transcriptCollapsed = !demo.transcriptCollapsed
             onFinishRequested: demo.finishInterview()
