@@ -10,7 +10,7 @@ if(NOT DEFINED VERSION_PATCH)
     set(VERSION_PATCH 0)
 endif()
 if(NOT DEFINED VERSION_BUILD)
-    set(VERSION_BUILD 0)
+    set(VERSION_BUILD 1)
 endif()
 
 foreach(component MAJOR MINOR PATCH BUILD)
