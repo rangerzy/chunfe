@@ -1,13 +1,54 @@
-find_package(Qt6 6.12 REQUIRED COMPONENTS Multimedia)
-qt_add_executable(Chunfe main.cpp audio_device_list.h audio_device_list.cpp audio_level_test.h audio_level_test.cpp offline_transcription_controller.h offline_transcription_controller.cpp)
+find_package(Qt6 6.12 REQUIRED COMPONENTS Multimedia Network)
+set(chunfe_model_connection_sources
+    deepseek_client.h deepseek_client.cpp
+    deepseek_stream.h deepseek_stream.cpp
+    model_connection_controller.h model_connection_controller.cpp)
+set(chunfe_app_settings_sources app_settings.h app_settings.cpp)
+set(chunfe_model_test_chat_sources model_test_chat_controller.h model_test_chat_controller.cpp)
+set(chunfe_background_sources
+    background_controller.h background_controller.cpp
+    background_analysis_controller.h background_analysis_controller.cpp)
+qt_add_executable(Chunfe
+    main.cpp audio_device_list.h audio_device_list.cpp audio_level_test.h audio_level_test.cpp
+    offline_transcription_controller.h offline_transcription_controller.cpp
+    ${chunfe_model_connection_sources} ${chunfe_app_settings_sources} ${chunfe_background_sources}
+    ${chunfe_model_test_chat_sources})
 cf_log_configure_target(Chunfe app)
 target_compile_features(Chunfe PRIVATE cxx_std_23)
 target_link_libraries(Chunfe PRIVATE
-    Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia chunfe_fonts chunfe_gui chunfe_guiplugin audio_pipline offline_transcription
+    Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network
+    chunfe_fonts chunfe_gui chunfe_guiplugin audio_pipline offline_transcription
 )
 
 if(CHUNFE_BUILD_TESTS)
     find_package(Qt6 6.12 REQUIRED COMPONENTS Test)
+    qt_add_executable(background_controller_tests tests/background_controller_tests.cpp
+        ${chunfe_background_sources} ${chunfe_app_settings_sources} ${chunfe_model_connection_sources})
+    target_compile_features(background_controller_tests PRIVATE cxx_std_23)
+    target_include_directories(background_controller_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(background_controller_tests PRIVATE Qt6::Test Qt6::Network)
+    add_test(NAME background_controller_tests COMMAND background_controller_tests)
+
+    qt_add_executable(app_settings_tests tests/app_settings_tests.cpp ${chunfe_app_settings_sources})
+    target_compile_features(app_settings_tests PRIVATE cxx_std_23)
+    target_include_directories(app_settings_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(app_settings_tests PRIVATE Qt6::Test)
+    add_test(NAME app_settings_tests COMMAND app_settings_tests)
+
+    qt_add_executable(model_connection_controller_tests
+        tests/model_connection_controller_tests.cpp ${chunfe_model_connection_sources})
+    target_compile_features(model_connection_controller_tests PRIVATE cxx_std_23)
+    target_include_directories(model_connection_controller_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(model_connection_controller_tests PRIVATE Qt6::Test Qt6::Network)
+    add_test(NAME model_connection_controller_tests COMMAND model_connection_controller_tests)
+
+    qt_add_executable(model_test_chat_controller_tests tests/model_test_chat_controller_tests.cpp
+        ${chunfe_model_test_chat_sources} ${chunfe_model_connection_sources})
+    target_compile_features(model_test_chat_controller_tests PRIVATE cxx_std_23)
+    target_include_directories(model_test_chat_controller_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(model_test_chat_controller_tests PRIVATE Qt6::Test Qt6::Network)
+    add_test(NAME model_test_chat_controller_tests COMMAND model_test_chat_controller_tests)
+
     qt_add_executable(application_quit_tests tests/application_quit_tests.cpp)
     target_compile_features(application_quit_tests PRIVATE cxx_std_23)
     target_link_libraries(application_quit_tests PRIVATE Qt6::QuickControls2 chunfe_gui chunfe_guiplugin)

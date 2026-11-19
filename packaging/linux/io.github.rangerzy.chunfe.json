@@ -8,6 +8,7 @@
   "appstream-compose": false,
   "finish-args": [
     "--share=ipc",
+    "--share=network",
     "--socket=fallback-x11",
     "--socket=wayland",
     "--socket=pulseaudio",
