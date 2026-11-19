@@ -20,6 +20,7 @@ void reset()
     value.supported = true;
     value.failPrepare = false;
     value.failStart = false;
+    value.disconnectOnStart = false;
     value.emitFrameOnStart = false;
     value.startDelayMs = 0;
     value.startInProgress = false;
@@ -75,7 +76,7 @@ bool MacSystemCapture::prepare(const QString& deviceUid, Callback callback, void
     return true;
 }
 
-bool MacSystemCapture::start(QString* error)
+bool MacSystemCapture::start(QString* error, bool* deviceDisconnected)
 {
     auto& value = FakeMacSystemCapture::state();
     value.startInProgress.store(true, std::memory_order_release);
@@ -86,6 +87,11 @@ bool MacSystemCapture::start(QString* error)
     }
     ++value.startCalls;
     value.startInProgress.store(false, std::memory_order_release);
+    if (deviceDisconnected) *deviceDisconnected = value.disconnectOnStart;
+    if (value.disconnectOnStart) {
+        if (error) *error = QStringLiteral("系统音频设备已断开，请重新选择输出设备");
+        return false;
+    }
     if (!d->prepared || value.failStart) {
         if (error) *error = QStringLiteral("Injected system capture start failure");
         return false;

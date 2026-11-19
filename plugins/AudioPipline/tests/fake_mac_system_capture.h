@@ -14,6 +14,7 @@ struct State {
     bool supported = true;
     bool failPrepare = false;
     bool failStart = false;
+    bool disconnectOnStart = false;
     bool emitFrameOnStart = false;
     std::atomic<int> startDelayMs{0};
     std::atomic<bool> startInProgress{false};

@@ -302,9 +302,11 @@ AudioError AudioCaptureWorker::startCapture()
 #ifdef __APPLE__
     if (d->mac) {
         QString message;
-        if (!d->mac->start(&message)) {
+        bool deviceDisconnected = false;
+        if (!d->mac->start(&message, &deviceDisconnected)) {
             d->monitoring.store(false, std::memory_order_release);
-            return captureError(AudioErrorCode::BackendStartFailed, message, d->source);
+            const auto code = deviceDisconnected ? AudioErrorCode::DeviceDisconnected : AudioErrorCode::BackendStartFailed;
+            return captureError(code, message, d->source);
         }
     } else
 #endif

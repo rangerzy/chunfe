@@ -22,6 +22,9 @@
 namespace {
 constexpr std::uint32_t outputRate = 16000;
 constexpr std::uint32_t outputChannels = 1;
+// A confirmed disconnect supersedes a change or an ambiguous read error.
+enum class RouteCheck { Ready, ReadError, Changed, Disconnected };
+
 void setError(QString* error, const char* operation, OSStatus status)
 {
     if (error) {
@@ -39,7 +42,7 @@ bool deviceProperty(AudioObjectID object, AudioObjectPropertySelector selector, 
     return AudioObjectGetPropertyData(object, &address, 0, nullptr, &size, value) == noErr && *value;
 }
 
-AudioObjectID findOutputDevice(const QString& uid, QString* error)
+AudioObjectID findOutputDevice(const QString& uid, QString* error, OSStatus* lookupStatus = nullptr)
 {
     // 设备 UID 是稳定标识；仅空 UID 才在当前时刻解析系统默认输出。
     AudioObjectPropertyAddress address{};
@@ -57,6 +60,7 @@ AudioObjectID findOutputDevice(const QString& uid, QString* error)
                                                    length:utf8.size()
                                                  encoding:NSUTF8StringEncoding];
         if (!nsUid) {
+            if (lookupStatus) *lookupStatus = paramErr;
             setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "输出设备标识无效"), paramErr);
             return kAudioObjectUnknown;
         }
@@ -64,6 +68,8 @@ AudioObjectID findOutputDevice(const QString& uid, QString* error)
         address.mSelector = kAudioHardwarePropertyTranslateUIDToDevice;
         status = AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, sizeof(cfUid), &cfUid, &size, &device);
     }
+    if (status == noErr && size != sizeof(device)) status = kAudioHardwareBadPropertySizeError;
+    if (lookupStatus) *lookupStatus = status;
     if (status != noErr || device == kAudioObjectUnknown) {
         setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "找不到输出设备"), status != noErr ? status : kAudioHardwareBadObjectError);
         return kAudioObjectUnknown;
@@ -71,15 +77,12 @@ AudioObjectID findOutputDevice(const QString& uid, QString* error)
     return device;
 }
 
-bool deviceAlive(AudioObjectID device)
+bool missingDevice(OSStatus status)
 {
-    AudioObjectPropertyAddress address{kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal,
-                                       kAudioObjectPropertyElementMain};
-    UInt32 size = sizeof(UInt32), alive = 0;
-    return AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &alive) == noErr && alive != 0;
+    return status == kAudioHardwareBadObjectError || status == kAudioHardwareBadDeviceError;
 }
 
-bool deviceListed(AudioObjectID device)
+RouteCheck checkDevice(AudioObjectID device)
 {
     AudioObjectPropertyAddress address{kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal,
                                        kAudioObjectPropertyElementMain};
@@ -87,28 +90,57 @@ bool deviceListed(AudioObjectID device)
     UInt32 size = 0;
     if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size) != noErr ||
         size > sizeof(devices) || size % sizeof(AudioObjectID) != 0)
-        return false;
+        return RouteCheck::ReadError;
     if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, devices.data()) != noErr ||
         size > sizeof(devices) || size % sizeof(AudioObjectID) != 0)
-        return false;
-    for (std::size_t i = 0; i < size / sizeof(AudioObjectID); ++i) {
-        if (devices[i] == device)
-            return true;
-    }
-    return false;
+        return RouteCheck::ReadError;
+    const auto end = devices.begin() + size / sizeof(AudioObjectID);
+    if (std::find(devices.begin(), end, device) == end) return RouteCheck::Disconnected;
+
+    address.mSelector = kAudioDevicePropertyDeviceIsAlive;
+    UInt32 alive = 0;
+    size = sizeof(alive);
+    const auto status = AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &alive);
+    if (missingDevice(status)) return RouteCheck::Disconnected;
+    if (status != noErr || size != sizeof(alive)) return RouteCheck::ReadError;
+    return alive ? RouteCheck::Ready : RouteCheck::Disconnected;
 }
 
-bool singleOutputStream(AudioObjectID device, AudioObjectID* stream)
+RouteCheck resolveSelectedOutput(const QString& uid, AudioObjectID* output)
+{
+    if (uid.isEmpty()) return RouteCheck::ReadError;
+    @autoreleasepool {
+        OSStatus status = noErr;
+        *output = findOutputDevice(uid, nullptr, &status);
+        if (*output == kAudioObjectUnknown)
+            return status == noErr ? RouteCheck::Disconnected : RouteCheck::ReadError;
+        const auto result = checkDevice(*output);
+        if (result != RouteCheck::Disconnected) return result;
+
+        // The same UID may acquire a new object while checking the old one.
+        const auto rebound = findOutputDevice(uid, nullptr);
+        if (rebound == kAudioObjectUnknown || rebound == *output || checkDevice(rebound) != RouteCheck::Ready)
+            return RouteCheck::Disconnected;
+        *output = rebound;
+        return RouteCheck::Ready;
+    }
+}
+
+RouteCheck readOutputStream(AudioObjectID device, AudioObjectID* stream)
 {
     // 当前 tap 固定采集输出流 0，多输出流设备无法可靠对应，因此保守拒绝。
     AudioObjectPropertyAddress address{kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput,
                                        kAudioObjectPropertyElementMain};
     UInt32 size = 0;
     if (AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size) != noErr ||
-        size != sizeof(AudioObjectID))
-        return false;
-    return AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, stream) == noErr &&
-           size == sizeof(AudioObjectID) && *stream != kAudioObjectUnknown;
+        size % sizeof(AudioObjectID) != 0)
+        return RouteCheck::ReadError;
+    if (size != sizeof(AudioObjectID)) return RouteCheck::Changed;
+    if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, stream) != noErr)
+        return RouteCheck::ReadError;
+    if (size % sizeof(AudioObjectID) != 0) return RouteCheck::ReadError;
+    if (size != sizeof(AudioObjectID)) return RouteCheck::Changed;
+    return *stream != kAudioObjectUnknown ? RouteCheck::Ready : RouteCheck::ReadError;
 }
 
 bool hasInputStream(AudioObjectID device)
@@ -145,9 +177,39 @@ bool streamFormat(AudioObjectID stream, AudioObjectPropertySelector selector,
     return AudioObjectGetPropertyData(stream, &address, 0, nullptr, &size, format) == noErr &&
            size == sizeof(*format);
 }
+
+RouteCheck checkFormat(AudioObjectID object, AudioObjectPropertySelector selector,
+                       const AudioStreamBasicDescription& expected)
+{
+    AudioStreamBasicDescription current{};
+    if (!streamFormat(object, selector, &current)) return RouteCheck::ReadError;
+    return sameFormat(current, expected) ? RouteCheck::Ready : RouteCheck::Changed;
+}
+
+void setStartupError(QString* error, bool* deviceDisconnected, RouteCheck check, OSStatus startStatus)
+{
+    switch (check) {
+    case RouteCheck::Disconnected:
+        if (deviceDisconnected) *deviceDisconnected = true;
+        setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "系统音频设备已断开，请重新选择输出设备"), kAudioHardwareBadDeviceError);
+        break;
+    case RouteCheck::Changed:
+        setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "启动前系统音频设备仍在变化，请重试"), kAudioHardwareBadObjectError);
+        break;
+    case RouteCheck::ReadError:
+        setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "无法确认系统音频设备及格式"), kAudioHardwareBadObjectError);
+        break;
+    case RouteCheck::Ready:
+        setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "无法启动系统音频采集"), startStatus);
+        break;
+    }
+}
 }
 
 struct MacSystemCapture::Impl {
+    // Startup failure states use the same increasing priority as RouteCheck.
+    enum class Gate { Closed, Starting, Running, StartReadError, StartChanged, StartDisconnected };
+
     // tap 截取选定输出的系统声音；aggregate 把 tap 接成可注册 IOProc 的私有设备。
     AudioObjectID tap = kAudioObjectUnknown;
     AudioObjectID aggregate = kAudioObjectUnknown;
@@ -167,9 +229,8 @@ struct MacSystemCapture::Impl {
     ma_data_converter converter{};
     bool converterReady = false;
     bool started = false;
-    std::atomic<bool> accepting{false};
+    std::atomic<Gate> gate{Gate::Closed};
     std::atomic<unsigned> inFlight{0};
-    std::atomic<bool> failureNotified{false};
     bool aliveListener = false;
     bool devicesListener = false;
     bool streamsListener = false;
@@ -180,21 +241,59 @@ struct MacSystemCapture::Impl {
     std::array<float, 32768> scratch{};
     std::array<std::int16_t, 1024> converted{};
 
+    RouteCheck checkSelection() const
+    {
+        AudioObjectID currentOutput = kAudioObjectUnknown;
+        const auto result = resolveSelectedOutput(uid, &currentOutput);
+        if (result != RouteCheck::Ready) return result;
+        return currentOutput == output ? RouteCheck::Ready : RouteCheck::Changed;
+    }
+
+    RouteCheck checkStream() const
+    {
+        AudioObjectID stream = kAudioObjectUnknown;
+        const auto result = readOutputStream(output, &stream);
+        if (result != RouteCheck::Ready) return result;
+        return stream == outputStream ? RouteCheck::Ready : RouteCheck::Changed;
+    }
+
+    RouteCheck checkRoute() const
+    {
+        const auto selection = checkSelection();
+        if (selection != RouteCheck::Ready) return selection;
+        const auto stream = checkStream();
+        if (stream == RouteCheck::Changed) return stream;
+        // Direct evidence of a new format takes precedence over an unrelated read failure.
+        const auto physical = checkFormat(outputStream, kAudioStreamPropertyPhysicalFormat, physicalFormat);
+        const auto virtualOutput = checkFormat(outputStream, kAudioStreamPropertyVirtualFormat, virtualFormat);
+        const auto tapOutput = checkFormat(tap, kAudioTapPropertyFormat, format);
+        if (physical == RouteCheck::Changed || virtualOutput == RouteCheck::Changed || tapOutput == RouteCheck::Changed)
+            return RouteCheck::Changed;
+        if (stream == RouteCheck::ReadError || physical == RouteCheck::ReadError ||
+            virtualOutput == RouteCheck::ReadError || tapOutput == RouteCheck::ReadError) {
+            // Distinguish a late removal/rebind from a property read failure on a live output.
+            const auto currentSelection = checkSelection();
+            if (currentSelection != RouteCheck::Ready) return currentSelection;
+            return RouteCheck::ReadError;
+        }
+        return RouteCheck::Ready;
+    }
+
     // 持续保留重采样器状态以衔接相邻回调；输出缓冲区固定，音频线程不分配内存。
     void deliver(const float* input, std::uint32_t frames, std::uint32_t inputOffset, std::uint32_t totalFrames)
     {
         std::uint64_t offset = 0;
-        while (offset < frames && accepting.load()) {
+        while (offset < frames && gate.load() == Gate::Running) {
             ma_uint64 consumed = frames - offset;
             ma_uint64 produced = converted.size();
             const auto result = ma_data_converter_process_pcm_frames(
                 &converter, input + offset * channelCount, &consumed, converted.data(), &produced);
             if (result != MA_SUCCESS || (!consumed && !produced)) {
-                reportFailure("System audio conversion failed");
+                invalidateRoute(RouteCheck::ReadError, "System audio conversion failed");
                 return;
             }
             offset += consumed;
-            if (produced) {
+            if (produced && gate.load() == Gate::Running) {
                 // 一次 Core Audio 输入可能拆成多个输出块；按原始帧进度回推，避免各块时间重叠。
                 const auto remainingFrames = std::uint64_t(totalFrames) - inputOffset - offset;
                 const auto remainingNs = remainingFrames * 1000000000ULL / rate;
@@ -209,67 +308,63 @@ struct MacSystemCapture::Impl {
         ~FlightGuard() { count.fetch_sub(1); }
     };
 
-    void reportFailure(const char* message)
+    void invalidateRoute(RouteCheck result, const char* message)
     {
-        // 并发设备通知只上报一次，先关采集入口，再由上层派发停机。
-        if (!accepting.load())
-            return;
-        inFlight.fetch_add(1);
-        FlightGuard flight{inFlight};
-        if (!accepting.load() || failureNotified.exchange(true))
-            return;
-        accepting.store(false);
-        if (failureCallback)
-            failureCallback(userData, message);
+        Gate startupFailure = Gate::StartReadError;
+        if (result == RouteCheck::Changed) startupFailure = Gate::StartChanged;
+        if (result == RouteCheck::Disconnected) startupFailure = Gate::StartDisconnected;
+
+        auto current = gate.load();
+        while (current != Gate::Closed && current < startupFailure) {
+            const auto next = current == Gate::Running ? Gate::Closed : startupFailure;
+            if (gate.compare_exchange_weak(current, next)) {
+                // Startup owns recovery. Once published, only the first runtime failure notifies the worker.
+                if (current == Gate::Running && failureCallback) failureCallback(userData, message);
+                return;
+            }
+        }
     }
 
     static OSStatus onProperty(AudioObjectID object, UInt32 count,
                                const AudioObjectPropertyAddress* addresses, void* context)
     {
         auto* self = static_cast<Impl*>(context);
-        if (!self->accepting.load())
-            return noErr;
         self->inFlight.fetch_add(1);
         FlightGuard flight{self->inFlight};
-        if (!self->accepting.load())
-            return noErr;
+        if (self->gate.load() == Gate::Closed) return noErr;
         // 设备消失或已选输出/tap 的流、格式变化时，原先准备的转换参数不再可靠。
+        RouteCheck strongest = RouteCheck::Ready;
+        const char* reason = nullptr;
         for (UInt32 i = 0; i < count; ++i) {
-            const auto selector = addresses[i].mSelector;
-            if (object == kAudioObjectSystemObject && selector == kAudioHardwarePropertyDevices &&
-                (!deviceListed(self->output) || !deviceAlive(self->output))) {
-                self->reportFailure("System audio output device disconnected");
-                break;
+            const auto& address = addresses[i];
+            const auto selector = address.mSelector;
+            const auto scope = selector == kAudioDevicePropertyStreams
+                ? kAudioObjectPropertyScopeOutput : kAudioObjectPropertyScopeGlobal;
+            if (address.mScope != scope || address.mElement != kAudioObjectPropertyElementMain) continue;
+            RouteCheck result = RouteCheck::Ready;
+            const char* message = nullptr;
+            if ((object == kAudioObjectSystemObject && selector == kAudioHardwarePropertyDevices) ||
+                (object == self->output && selector == kAudioDevicePropertyDeviceIsAlive)) {
+                result = self->checkSelection();
+                message = "System audio output device changed";
+            } else if (object == self->output && selector == kAudioDevicePropertyStreams) {
+                result = self->checkStream();
+                message = "System audio output streams changed";
+            } else if (object == self->outputStream && (selector == kAudioStreamPropertyPhysicalFormat ||
+                                                         selector == kAudioStreamPropertyVirtualFormat)) {
+                const auto& expected = selector == kAudioStreamPropertyPhysicalFormat ? self->physicalFormat : self->virtualFormat;
+                result = checkFormat(object, selector, expected);
+                message = "System audio output format changed";
+            } else if (object == self->tap && selector == kAudioTapPropertyFormat) {
+                result = checkFormat(object, selector, self->format);
+                message = "System audio tap format changed";
             }
-            if (object == self->output && selector == kAudioDevicePropertyDeviceIsAlive &&
-                !deviceAlive(self->output)) {
-                self->reportFailure("System audio output device disconnected");
-                break;
-            }
-            if (object == self->output && selector == kAudioDevicePropertyStreams) {
-                AudioObjectID stream = kAudioObjectUnknown;
-                if (!singleOutputStream(self->output, &stream) || stream != self->outputStream) {
-                    self->reportFailure("System audio output streams changed");
-                    break;
-                }
-            }
-            if (object == self->outputStream && (selector == kAudioStreamPropertyPhysicalFormat ||
-                                                  selector == kAudioStreamPropertyVirtualFormat)) {
-                self->reportFailure("System audio output format changed");
-                break;
-            }
-            if (object == self->tap && selector == kAudioTapPropertyFormat) {
-                AudioStreamBasicDescription current{};
-                UInt32 size = sizeof(current);
-                AudioObjectPropertyAddress addr{kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal,
-                                                kAudioObjectPropertyElementMain};
-                if (AudioObjectGetPropertyData(self->tap, &addr, 0, nullptr, &size, &current) != noErr ||
-                    !sameFormat(current, self->format)) {
-                    self->reportFailure("System audio tap format changed");
-                    break;
-                }
+            if (result > strongest) {
+                strongest = result;
+                reason = message;
             }
         }
+        if (strongest != RouteCheck::Ready) self->invalidateRoute(strongest, reason);
         return noErr;
     }
 
@@ -306,11 +401,9 @@ struct MacSystemCapture::Impl {
                             const AudioTimeStamp*, AudioBufferList*, const AudioTimeStamp*, void* context)
     {
         auto* self = static_cast<Impl*>(context);
-        if (!self->accepting.load())
-            return noErr;
         self->inFlight.fetch_add(1);
         FlightGuard flight{self->inFlight};
-        if (!self->accepting.load() || !self->callback || !input ||
+        if (self->gate.load() != Gate::Running || !self->callback || !input ||
             input->mNumberBuffers == 0 || !self->channelCount)
             return noErr;
 
@@ -406,7 +499,7 @@ bool MacSystemCapture::prepare(const QString& deviceUid, Callback callback, void
             if (output == kAudioObjectUnknown)
                 return false;
             AudioObjectID outputStream = kAudioObjectUnknown;
-            if (!deviceListed(output) || !deviceAlive(output) || !singleOutputStream(output, &outputStream)) {
+            if (checkDevice(output) != RouteCheck::Ready || readOutputStream(output, &outputStream) != RouteCheck::Ready) {
                 setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "输出设备不可用或不支持多个输出流"),
                          kAudioHardwareUnsupportedOperationError);
                 return false;
@@ -427,6 +520,10 @@ bool MacSystemCapture::prepare(const QString& deviceUid, Callback callback, void
             }
             d->uid = QString::fromUtf8([(__bridge NSString*)uid UTF8String]);
             CFRelease(uid);
+            if (d->uid.isEmpty() || (!deviceUid.isEmpty() && d->uid != deviceUid)) {
+                setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "无法确认所选输出设备标识"), kAudioHardwareBadObjectError);
+                return false;
+            }
             if (deviceProperty(output, kAudioObjectPropertyName, &name)) {
                 d->name = QString::fromUtf8([(__bridge NSString*)name UTF8String]);
                 CFRelease(name);
@@ -539,51 +636,64 @@ bool MacSystemCapture::prepare(const QString& deviceUid, Callback callback, void
     return false;
 }
 
-bool MacSystemCapture::start(QString* error)
+bool MacSystemCapture::start(QString* error, bool* deviceDisconnected)
 {
-    if (error)
-        error->clear();
+    if (error) error->clear();
+    if (deviceDisconnected) *deviceDisconnected = false;
     if (!d->ioProc || d->aggregate == kAudioObjectUnknown) {
         setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "系统音频尚未准备"), paramErr);
         return false;
     }
-    if (d->started)
-        return true;
-    d->failureNotified.store(false);
-    d->accepting.store(true);
-    // prepare 到 start 之间设备可能断开或切换格式，重新核对后才交给 Core Audio 启动。
-    AudioObjectID currentStream = kAudioObjectUnknown;
-    AudioStreamBasicDescription currentFormat{};
-    AudioStreamBasicDescription currentPhysicalFormat{};
-    AudioStreamBasicDescription currentVirtualFormat{};
-    UInt32 formatSize = sizeof(currentFormat);
-    AudioObjectPropertyAddress tapFormat{kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal,
-                                         kAudioObjectPropertyElementMain};
-    const bool valid = deviceListed(d->output) && deviceAlive(d->output) && singleOutputStream(d->output, &currentStream) &&
-        currentStream == d->outputStream &&
-        streamFormat(d->outputStream, kAudioStreamPropertyPhysicalFormat, &currentPhysicalFormat) &&
-        streamFormat(d->outputStream, kAudioStreamPropertyVirtualFormat, &currentVirtualFormat) &&
-        sameFormat(currentPhysicalFormat, d->physicalFormat) &&
-        sameFormat(currentVirtualFormat, d->virtualFormat) &&
-        AudioObjectGetPropertyData(d->tap, &tapFormat, 0, nullptr, &formatSize, &currentFormat) == noErr &&
-        sameFormat(currentFormat, d->format);
-    if (!valid || !d->accepting.load()) {
-        d->accepting.store(false);
-        while (d->inFlight.load() != 0)
-            std::this_thread::yield();
-        setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "启动前系统音频设备已变化"), kAudioHardwareBadObjectError);
+    using Gate = Impl::Gate;
+    if (d->started) {
+        if (d->gate.load() == Gate::Running) return true;
+        setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "系统音频采集尚未停止，请重试"), kAudioHardwareIllegalOperationError);
         return false;
     }
-    const OSStatus status = AudioDeviceStart(d->aggregate, d->ioProc);
-    if (status != noErr) {
-        d->accepting.store(false);
-        while (d->inFlight.load() != 0)
-            std::this_thread::yield();
-        setError(error, QT_TRANSLATE_NOOP("MacSystemCapture", "无法启动系统音频采集"), status);
-        return false;
+
+    const QString selectedUid = d->uid;
+    const auto callback = d->callback;
+    const auto failure = d->failureCallback;
+    auto* const userData = d->userData;
+    bool canRetry = !selectedUid.isEmpty();
+    for (;;) {
+        d->gate.store(Gate::Starting);
+        auto check = d->checkRoute();
+        OSStatus status = noErr;
+        if (check == RouteCheck::Ready) {
+            if (d->gate.load() == Gate::Starting) {
+                status = AudioDeviceStart(d->aggregate, d->ioProc);
+                d->started = status == noErr;
+            }
+            // 启动也可能促使设备改变格式。确认前不交付 PCM。
+            check = d->checkRoute();
+        }
+        Gate expected = Gate::Starting;
+        if (d->started && check == RouteCheck::Ready && d->gate.compare_exchange_strong(expected, Gate::Running))
+            return true;
+
+        const auto notification = d->gate.exchange(Gate::Closed);
+        while (d->inFlight.load() != 0) std::this_thread::yield();
+        if (notification == Gate::StartDisconnected) check = RouteCheck::Disconnected;
+        else if (notification == Gate::StartChanged) check = std::max(check, RouteCheck::Changed);
+        else if (notification == Gate::StartReadError) check = std::max(check, RouteCheck::ReadError);
+        if (check != RouteCheck::Changed || !canRetry) {
+            if (d->started && !stop(error)) return false;
+            setStartupError(error, deviceDisconnected, check, status);
+            return false;
+        }
+
+        // 启用同一蓝牙耳机的麦克风时，输出可能切到另一种格式或重新注册为新对象。
+        // 只按已选 UID 重新准备一次，避免误采系统默认输出或在不稳定的路由上循环。
+        canRetry = false;
+        if (!stop(error)) return false;
+        if (!prepare(selectedUid, callback, userData, error, failure)) {
+            AudioObjectID currentOutput = kAudioObjectUnknown;
+            if (resolveSelectedOutput(selectedUid, &currentOutput) == RouteCheck::Disconnected)
+                setStartupError(error, deviceDisconnected, RouteCheck::Disconnected, noErr);
+            return false;
+        }
     }
-    d->started = true;
-    return true;
 }
 
 bool MacSystemCapture::stop(QString* error)
@@ -592,7 +702,7 @@ bool MacSystemCapture::stop(QString* error)
         error->clear();
     // 先关闭回调入口、停止设备并等待在途回调退出，再依次释放监听器、IOProc、聚合设备和 tap。
     // 任一步失败都保留尚未释放的状态，供下次 stop 从该位置继续清理。
-    d->accepting.store(false);
+    d->gate.store(Impl::Gate::Closed);
     if (d->started) {
         const OSStatus status = AudioDeviceStop(d->aggregate, d->ioProc);
         while (d->inFlight.load() != 0)
@@ -660,7 +770,6 @@ bool MacSystemCapture::stop(QString* error)
     d->name.clear();
     d->output = kAudioObjectUnknown;
     d->outputStream = kAudioObjectUnknown;
-    d->failureNotified.store(false);
     return true;
 }
 
@@ -676,10 +785,10 @@ bool MacSystemCapture::isCaptureCandidate(const QString& deviceUid, DeviceDirect
     if (deviceUid.isEmpty()) return false;
     @autoreleasepool {
         const auto device = findOutputDevice(deviceUid, nullptr);
-        if (device == kAudioObjectUnknown || !deviceListed(device) || !deviceAlive(device)) return false;
+        if (device == kAudioObjectUnknown || checkDevice(device) != RouteCheck::Ready) return false;
         if (direction == DeviceDirection::Input) return hasInputStream(device);
         AudioObjectID stream = kAudioObjectUnknown;
-        return singleOutputStream(device, &stream);
+        return readOutputStream(device, &stream) == RouteCheck::Ready;
     }
 }
 

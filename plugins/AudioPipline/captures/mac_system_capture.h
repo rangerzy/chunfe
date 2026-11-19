@@ -27,8 +27,9 @@ public:
     // 空 deviceUid 在准备时解析并固定当时的默认输出；prepare 创建资源但不启动采集。
     bool prepare(const QString& deviceUid, Callback callback, void* userData, QString* error,
                  FailureCallback failure = nullptr);
-    // 重新确认设备和格式没有变化后启动；系统音频授权由 macOS 处理。
-    bool start(QString* error);
+    // 复核设备和格式；选中输出发生变化时按同一 UID 重新准备一次。
+    // deviceDisconnected 仅在确认选中输出已断开时设为 true。
+    bool start(QString* error, bool* deviceDisconnected = nullptr);
     // false 表示仍有 Core Audio 资源未释放；再次调用可继续尝试清理。
     bool stop(QString* error = nullptr);
 

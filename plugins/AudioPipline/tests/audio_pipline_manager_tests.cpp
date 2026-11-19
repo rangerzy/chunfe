@@ -457,6 +457,32 @@ private slots:
         QVERIFY(!FakeMacSystemCapture::state().live);
     }
 
+    void systemDeviceDisconnectedDuringStartupPromptsReselection()
+    {
+        using namespace AudioPipline;
+        prepareInput();
+        prepareOutput();
+        FakeMacSystemCapture::state().disconnectOnStart = true;
+        AudioPiplineManager manager;
+        AudioLevelTest meter(manager);
+        QSignalSpy started(&manager, &AudioPiplineManager::captureStarted);
+        QSignalSpy issues(&manager, &AudioPiplineManager::issueReported);
+
+        meter.start(QStringLiteral("fake-microphone"), QStringLiteral("fake-speaker"));
+
+        QTRY_COMPARE_WITH_TIMEOUT(issues.size(), 1, 3000);
+        const auto issue = qvariant_cast<AudioIssue>(issues.front().at(0));
+        QCOMPARE(issue.error.source, AudioSource::Spk);
+        QCOMPARE(issue.error.code, AudioErrorCode::DeviceDisconnected);
+        QTRY_COMPARE_WITH_TIMEOUT(manager.capture().state, CaptureState::Idle, 3000);
+        QCOMPARE(meter.systemStatus(), issue.error.message);
+        QVERIFY(meter.systemStatus().contains(QStringLiteral("请重新选择输出设备")));
+        QVERIFY(!meter.active());
+        QVERIFY(started.isEmpty());
+        QCOMPARE(fake.deviceStartCalls, 1);
+        QCOMPARE(FakeMacSystemCapture::state().startCalls, 1);
+    }
+
     void bothSourcesWaitForStartupBeforePublishingPcm()
     {
         using namespace AudioPipline;
