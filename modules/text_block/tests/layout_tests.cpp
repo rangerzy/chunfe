@@ -5,8 +5,10 @@
 #include <QFontDatabase>
 #include <QGlyphRun>
 #include <QTextCharFormat>
+#include <QTextOption>
 #include <QtTest>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -53,6 +55,21 @@ QRectF renderedInk(const QTextLayout &layout)
         }
     }
     return result;
+}
+
+qreal unwrappedTextWidth(const QString &text, const QFont &font)
+{
+    QTextLayout reference(text, font);
+    QTextOption option;
+    option.setWrapMode(QTextOption::NoWrap);
+    option.setUseDesignMetrics(true);
+    reference.setTextOption(option);
+    reference.beginLayout();
+    auto line = reference.createLine();
+    line.setLineWidth(1e7);
+    reference.endLayout();
+    const auto ink = renderedInk(reference);
+    return std::max(line.naturalTextWidth(), ink.right()) + std::max(qreal(0), -ink.left());
 }
 
 } // namespace
@@ -239,19 +256,32 @@ void LayoutTests::includesItalicInkInsideMeasuredBounds()
 void LayoutTests::wrappedItalicFitsWhenGraphemesFit()
 {
     QStringList families{testFont().family()};
-    if (QFontDatabase::families().contains(QStringLiteral("PingFang SC")))
-        families.append(QStringLiteral("PingFang SC"));
+    const auto availableFamilies = QFontDatabase::families();
+    for (const auto &family : {QStringLiteral("PingFang SC"), QStringLiteral("Ayuthaya"),
+                              QStringLiteral("DejaVu Math TeX Gyre")}) {
+        if (availableFamilies.contains(family) && !families.contains(family))
+            families.append(family);
+    }
     textblock::ParagraphLayout layout;
+    const QString text = QStringLiteral("j j j j j j j j j");
     for (const auto &family : families) {
         for (int pixelSize : {18, 32, 48}) {
             QFont font(family);
             font.setPixelSize(pixelSize);
             font.setItalic(true);
+            // Italic ink can exceed 0.7 em even for one glyph. Reserve its
+            // actual shaped extent so these cases exercise avoidable overflow.
+            const qreal graphemeWidth = unwrappedTextWidth(QStringLiteral("j"), font);
+            const qreal unwrappedWidth = unwrappedTextWidth(text, font);
             for (qreal width : {pixelSize * 0.7, pixelSize * 1.5625, qreal(240)}) {
-                layout.rebuild({QStringLiteral("j j j j j j j j j"), {}}, font, width, Qt::yellow);
+                width = std::max(width, graphemeWidth + 1.0 / 64.0);
+                layout.rebuild({text, {}}, font, width, Qt::yellow);
                 const auto ink = renderedInk(*layout.textLayout());
                 const auto context = QStringLiteral("%1, %2 px, width %3, ink right %4, measured %5")
                     .arg(family).arg(pixelSize).arg(width).arg(ink.right()).arg(layout.size().width());
+                QVERIFY2(graphemeWidth <= width, qPrintable(context));
+                if (unwrappedWidth > width)
+                    QVERIFY2(layout.lineCount() > 1, qPrintable(context));
                 QVERIFY2(ink.left() >= -0.01, qPrintable(context));
                 QVERIFY2(ink.right() <= layout.size().width() + 0.01, qPrintable(context));
                 QVERIFY(layout.size().width() <= width);
@@ -262,13 +292,28 @@ void LayoutTests::wrappedItalicFitsWhenGraphemesFit()
 
 void LayoutTests::oversizedGraphemeDoesNotNarrowFollowingLines()
 {
-    auto font = testFont();
-    font.setPixelSize(48);
+    QStringList families{testFont().family()};
+    const auto mathFamily = QStringLiteral("DejaVu Math TeX Gyre");
+    if (QFontDatabase::families().contains(mathFamily) && !families.contains(mathFamily))
+        families.append(mathFamily);
     textblock::ParagraphLayout layout;
-    layout.rebuild({QString::fromUtf8("👩‍💻\niii iii"), {}}, font, 35, Qt::yellow);
-    QVERIFY(layout.lineCount() >= 2);
-    QCOMPARE(layout.textLayout()->lineAt(1).textStart(), 6);
-    QVERIFY(layout.textLayout()->lineAt(1).textLength() >= 3);
+    const QString oversized = QString::fromUtf8("👩‍💻");
+    const QString following = QStringLiteral("iii");
+    for (const auto &family : families) {
+        QFont font(family);
+        font.setPixelSize(48);
+        const qreal followingWidth = unwrappedTextWidth(following, font);
+        const qreal width = followingWidth + 1.0 / 64.0;
+        const qreal oversizedWidth = unwrappedTextWidth(oversized, font);
+        const auto context = QStringLiteral("%1, following width %2, oversized width %3, viewport %4")
+            .arg(family).arg(followingWidth).arg(oversizedWidth).arg(width);
+        QVERIFY2(followingWidth <= width && oversizedWidth > width, qPrintable(context));
+        layout.rebuild({oversized + QLatin1Char('\n') + following + QLatin1Char(' ') + following, {}},
+                       font, width, Qt::yellow);
+        QVERIFY(layout.lineCount() >= 2);
+        QCOMPARE(layout.textLayout()->lineAt(1).textStart(), oversized.size() + 1);
+        QVERIFY2(layout.textLayout()->lineAt(1).textLength() >= following.size(), qPrintable(context));
+    }
 }
 
 QTEST_MAIN(LayoutTests)
