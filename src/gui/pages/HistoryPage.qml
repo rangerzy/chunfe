@@ -8,6 +8,7 @@ PageFrame {
     id: root
     required property var controller
     property string searchText: ""
+    readonly property bool storageUnavailable: controller.conversationStore?.ready === false
     readonly property var filteredRecords: controller.records.filter(function (record) {
         return String(record.title).toLowerCase().indexOf(root.searchText.trim().toLowerCase()) !== -1;
     })
@@ -18,12 +19,20 @@ PageFrame {
         PageHeader {
             Layout.fillWidth: true
             title: qsTr("对话记录")
-            subtitle: qsTr("回顾对话，以及当时的回应建议。")
+            subtitle: root.controller.isDemo ? qsTr("回顾对话，以及当时的回应建议。") : qsTr("回顾已保存的转写与背景资料。")
         }
         AppButton {
             text: qsTr("新建对话")
             onClicked: root.controller.startChecks()
         }
+    }
+    Label {
+        Layout.fillWidth: true
+        visible: root.storageUnavailable
+        text: root.controller.conversationStore?.errorMessage || qsTr("无法打开对话记录数据库。")
+        textFormat: Text.PlainText
+        color: Theme.danger
+        wrapMode: Text.Wrap
     }
     RowLayout {
         Layout.fillWidth: true
@@ -59,6 +68,7 @@ PageFrame {
             delegate: Rectangle {
                 id: recordRow
                 required property var modelData
+                readonly property int questionCount: modelData.questionCount ?? modelData.questions?.length ?? 0
                 Layout.fillWidth: true
                 implicitHeight: recordRowContent.implicitHeight + 40
                 radius: 8
@@ -89,6 +99,7 @@ PageFrame {
                         Label {
                             Layout.fillWidth: true
                             text: recordRow.modelData.title
+                            textFormat: Text.PlainText
                             font.pixelSize: 14
                             font.weight: Font.Medium
                             elide: Text.ElideRight
@@ -96,7 +107,9 @@ PageFrame {
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: String(recordRow.modelData.date || "") + " · " + String(recordRow.modelData.duration || "") + " · " + (recordRow.modelData.questions || []).length + qsTr(" 条建议")
+                            text: String(recordRow.modelData.date || "") + " · " + String(recordRow.modelData.duration || "")
+                                  + (recordRow.questionCount > 0 ? " · " + qsTr("%1 条建议").arg(recordRow.questionCount) : "")
+                            textFormat: Text.PlainText
                             color: Theme.muted
                             font.pixelSize: 12
                             elide: Text.ElideRight
@@ -108,7 +121,7 @@ PageFrame {
                         onClicked: root.controller.openRecord(recordRow.modelData.id)
                     }
                     IconButton {
-                        visible: root.bodyWidth > 650
+                        visible: root.bodyWidth > 650 && recordRow.modelData.isDemo
                         iconName: "download"
                         text: qsTr("导出 Markdown · %1").arg(recordRow.modelData.title)
                         onClicked: root.controller.exportRecord(recordRow.modelData.id)
@@ -123,7 +136,7 @@ PageFrame {
         }
         FormCard {
             Layout.fillWidth: true
-            visible: root.filteredRecords.length === 0
+            visible: root.filteredRecords.length === 0 && !root.storageUnavailable
             padding: 40
             AppIcon {
                 Layout.alignment: Qt.AlignHCenter

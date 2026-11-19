@@ -3,6 +3,7 @@
 #include <QtCore/QDebug>
 #include <QtCore/QEvent>
 #include <QtCore/QTimer>
+#include <QtCore/QVariant>
 #include <QtGui/QWindow>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQml/QQmlExtensionPlugin>
@@ -25,11 +26,15 @@ int main(int argc, char **argv)
 
     auto *demo = window->property("demoController").value<QObject *>();
     const QString state = app.arguments().value(1);
-    if (!demo || (state != "idle" && state != "active" && state != "finished"))
+    if (!demo || (state != "idle" && state != "active" && state != "finished" && state != "unsaved"))
         return 1;
 
     if (state == "idle") {
         if (!QMetaObject::invokeMethod(demo, "startChecks") || !demo->property("preflightVisible").toBool())
+            return 1;
+    } else if (state == "unsaved") {
+        demo->setProperty("unsavedRecords", QVariantList{QVariantMap{{QStringLiteral("id"), QStringLiteral("unsaved-fixture")}}});
+        if (!window->property("conversationBlocksQuit").toBool())
             return 1;
     } else {
         if (!QMetaObject::invokeMethod(demo, "beginInterview") || !window->property("transcriptVisible").toBool()
@@ -48,6 +53,22 @@ int main(int argc, char **argv)
         QEvent quit(QEvent::Quit);
         QCoreApplication::sendEvent(&app, &quit);
         QObject::disconnect(connection);
+
+        if (state == "unsaved") {
+            if (quit.isAccepted() || window->property("applicationQuitting").toBool() || !window->isVisible()) {
+                qCritical() << "Application quit discarded an unsaved conversation";
+                app.exit(1);
+                return;
+            }
+            window->setProperty("allowQuitWithUnsavedConversation", true);
+            QEvent confirmedQuit(QEvent::Quit);
+            QCoreApplication::sendEvent(&app, &confirmedQuit);
+            if (!confirmedQuit.isAccepted() || window->isVisible()) {
+                qCritical() << "Application did not quit after discarding an unsaved conversation was confirmed";
+                app.exit(1);
+            }
+            return;
+        }
 
         if (!quit.isAccepted() || demo->property("interviewActive").toBool() || demo->property("preflightVisible").toBool()
             || mainWindowReopened || window->isVisible() || window->property("transcriptVisible").toBool()

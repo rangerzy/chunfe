@@ -10,33 +10,26 @@ class OfflineTranscriptionControllerTests : public QObject {
 private slots:
     void initTestCase() {
         QVERIFY(m_settings.isValid());
-        QCoreApplication::setOrganizationName(QStringLiteral("ChunfeOfflineTests"));
-        QCoreApplication::setApplicationName(QStringLiteral("Controller"));
-        QSettings::setDefaultFormat(QSettings::IniFormat);
-        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_settings.path());
+        m_configFilePath = m_settings.filePath(QStringLiteral("config.ini"));
     }
     void legacyRuntimeSettingIsIgnored() {
-        QSettings settings;
+        QSettings settings(m_configFilePath, QSettings::IniFormat);
         settings.setValue(QStringLiteral("offlineTranscription/runtimePath"), QStringLiteral("/external/old-engine.dylib"));
         settings.setValue(QStringLiteral("offlineTranscription/modelPath"), QStringLiteral("/models/existing.gguf"));
         settings.sync();
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY(c.m_runtimePath != QStringLiteral("/external/old-engine.dylib"));
         QCOMPARE(c.modelPath(), QStringLiteral("/models/existing.gguf"));
-        c.saveModelPath(QStringLiteral(" /models/new.gguf "));
-        QCOMPARE(c.modelPath(), QStringLiteral("/models/new.gguf"));
-        QVERIFY(!QSettings().contains(QStringLiteral("offlineTranscription/runtimePath")));
     }
     void missingBundledRuntimeReportsInstallationFailure() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QFile model(dir.filePath(QStringLiteral("model.gguf")));
         QVERIFY(model.open(QIODevice::WriteOnly)); model.close();
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
-        c.saveModelPath(model.fileName());
+        OfflineTranscriptionController c(manager, m_configFilePath);
         c.m_runtimePath = dir.filePath(QStringLiteral("missing-runtime"));
-        c.loadEngine();
+        c.loadEngine(model.fileName());
         QCOMPARE(c.engineStatus(), QStringLiteral("error"));
         QVERIFY(c.engineError().contains(QStringLiteral("重新安装")));
         c.open();
@@ -44,7 +37,7 @@ private slots:
     }
     void rollingDraftRevisesWordsWithoutChangingCapsuleId() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         c.applyResult(1, {{}, QStringLiteral("我们今天一。"), true}, false);
         QCOMPARE(c.lines().size(), 1);
         const auto micId = c.lines()[0].toMap().value("id");
@@ -63,7 +56,7 @@ private slots:
     }
     void confirmedSentencesFinalizeOnceAndInOrder() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         c.applyResult(1, {{}, QStringLiteral("讨论项目。"), true}, false);
         const auto firstId = c.lines()[0].toMap().value("id");
         c.applyResult(2, {{}, QStringLiteral("System audio."), true}, false);
@@ -95,7 +88,7 @@ private slots:
     }
     void sourceFinalKeepsDraftAndStartsNewCapsule() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         c.applyResult(2, {{}, QStringLiteral("Hello"), true}, false);
         const auto spkDraft = c.lines()[0];
         c.applyResult(1, {{}, QStringLiteral("大家好。"), true}, false);
@@ -121,7 +114,7 @@ private slots:
     }
     void incompleteTailDoesNotInvalidateConfirmedSentence() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         const QString finished = QStringLiteral("这是第一句。");
         const QString unfinished = QStringLiteral("尾音未完成");
         c.applyResult(1, {{}, QStringLiteral("这是第一句。尾音未"), true}, false);
@@ -137,7 +130,7 @@ private slots:
     }
     void emptyDraftRevisionRemovesOnlyItsSource() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         c.applyResult(1, {{}, QStringLiteral("待确认"), true}, false);
         c.applyResult(2, {{}, QStringLiteral("System audio"), true}, false);
         const auto spkDraft = c.lines()[1];
@@ -162,37 +155,23 @@ private slots:
         QCOMPARE(result.matches.first().currentStart, 0);
         QVERIFY(alignOfflineTranscript(u"blue fox", u"large cat", 0.25).matches.isEmpty());
     }
-    void failedSettingsWriteIsVisibleAndKeepsDraftModel() {
-        QTemporaryDir dir; QVERIFY(dir.isValid());
-        QFile blocker(dir.filePath(QStringLiteral("file")));
-        QVERIFY(blocker.open(QIODevice::WriteOnly)); blocker.close();
-        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, blocker.fileName());
-        {
-            AudioPiplineManager manager;
-            OfflineTranscriptionController c(manager);
-            c.saveModelPath(QStringLiteral("/model"));
-            QCOMPARE(c.modelPath(), QStringLiteral("/model"));
-            QVERIFY(!c.engineError().isEmpty());
-        }
-        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_settings.path());
-    }
-    void modelPathPersistsAndInvalidModelDoesNotStartEngine() {
+    void invalidModelDoesNotStartEngineOrOverwritePath() {
+        const auto existingPath = QStringLiteral("/models/existing.gguf");
+        QSettings settings(m_configFilePath, QSettings::IniFormat);
+        settings.setValue(QStringLiteral("offlineTranscription/modelPath"), existingPath);
+        settings.sync();
         AudioPiplineManager manager;
-        {
-            OfflineTranscriptionController c(manager);
-            c.saveModelPath(QStringLiteral("/not-a-model"));
-            c.loadEngine();
-            QCOMPARE(c.engineStatus(), QStringLiteral("error"));
-            QVERIFY(!c.engineError().isEmpty());
-            c.open();
-            QVERIFY(!c.opened());
-        }
-        OfflineTranscriptionController c(manager);
-        QCOMPARE(c.modelPath(), QStringLiteral("/not-a-model"));
-        QCOMPARE(c.engineStatus(), QStringLiteral("stopped"));
+        OfflineTranscriptionController c(manager, m_configFilePath);
+        c.loadEngine(QStringLiteral("relative-model.gguf"));
+        QCOMPARE(c.engineStatus(), QStringLiteral("error"));
+        QVERIFY(!c.engineError().isEmpty());
+        QCOMPARE(c.modelPath(), existingPath);
+        c.open();
+        QVERIFY(!c.opened());
     }
 private:
     QTemporaryDir m_settings;
+    QString m_configFilePath;
 };
 QTEST_GUILESS_MAIN(OfflineTranscriptionControllerTests)
 #include "offline_transcription_controller_tests.moc"

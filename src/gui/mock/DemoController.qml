@@ -5,38 +5,70 @@ QtObject {
     id: root
     objectName: "demoController"
 
-    readonly property bool isDemo: true
+    property var conversationStore: null
+    property var offlineTranscription: null
+    property var audioLevelTest: null
+    property var conversationAdvice: null
+    readonly property bool isDemo: conversationStore === null
     property string route: "home"
     property string backgroundText: ""
-    property string backgroundName: ""
-    property string backgroundDraft: ""
-    readonly property bool backgroundDirty: backgroundDraft !== backgroundText
-    property string apiEndpoint: "https://api.example.com/v1"
-    property string apiKey: ""
-    property string modelName: "gpt-4.1"
-    property string connectionStatus: "idle"
+    readonly property string modelName: "gpt-4.1"
     property string engineStatus: "ready"
     property string systemDevice: "系统默认输出"
     property string microphone: "系统默认麦克风"
     property string startScenario: "success"
-    property var records: Data.records()
+    property var demoRecords: isDemo ? Data.records() : []
+    property var unsavedRecords: []
+    readonly property var records: isDemo ? demoRecords
+                                          : unsavedRecords.concat(Array.from(conversationStore.records ?? []))
     property string selectedRecordId: ""
-    readonly property var selectedRecord: records.find(function (item) {
-        return item.id === root.selectedRecordId;
-    }) || null
+    readonly property var selectedRecord: {
+        const summary = records.find(item => item.id === selectedRecordId);
+        if (!summary)
+            return null;
+        if (isDemo || summary.unsaved)
+            return summary;
+        const detail = conversationStore.record(selectedRecordId);
+        return detail?.id ? detail : null;
+    }
 
     property bool preflightVisible: false
     property string checkState: "idle"
     property int checkStep: 0
+    property string nativeCheckMessage: ""
+    property bool nativeStarting: false
+    property bool nativeStartCallActive: false
+    readonly property bool canLoadConversationEngine: !isDemo && !!offlineTranscription
+                                                      && offlineTranscription.engineStatus !== "ready"
     property int checkInterval: 320
     property int streamInterval: 45
     property bool interviewActive: false
+    property bool interviewEnding: false
     property bool paused: false
     property bool transcriptCollapsed: false
     property bool answerCollapsed: false
     property int elapsedSeconds: 0
     readonly property string elapsedText: formatTime(elapsedSeconds)
     property var messages: []
+    readonly property var liveConversationMessages: !isDemo && interviewActive
+                                                     ? transcriptMessages(offlineTranscription?.conversationLines ?? []) : []
+    readonly property bool nativeAdviceListening: !isDemo && interviewActive && !paused && !interviewEnding
+    onNativeAdviceListeningChanged: {
+        if (!isDemo)
+            conversationAdvice?.setListening(nativeAdviceListening);
+    }
+    readonly property string nativeConversationStatus: {
+        if (interviewEnding)
+            return qsTr("正在结束转写…");
+        if (offlineTranscription?.errorMessage)
+            return offlineTranscription.errorMessage;
+        switch (offlineTranscription?.status) {
+        case "pausing": return qsTr("正在暂停…");
+        case "paused": return qsTr("转写已暂停");
+        case "resuming": return qsTr("正在恢复…");
+        default: return qsTr("正在实时转写");
+        }
+    }
     property string question: ""
     property string answer: ""
     property string pendingQuestion: ""
@@ -50,11 +82,27 @@ QtObject {
     property int streamCursor: 0
     property string targetAnswer: ""
     property string sessionId: ""
+    property real sessionStartedAt: 0
     property string sessionDate: ""
     property string sessionBackground: ""
     property string sessionModel: ""
     property int sessionSequence: 0
-    readonly property var samples: Data.questions()
+    readonly property var samples: isDemo ? Data.questions() : []
+
+    property Connections nativeUpdates: Connections {
+        target: root.isDemo ? null : root.offlineTranscription
+        ignoreUnknownSignals: true
+        function onChanged() { root.observeNativeStart(); }
+        function onStatusChanged() { root.observeNativeStart(); }
+        function onLinesChanged() { root.forwardAdviceTranscript(); }
+        function onConversationFinished(lines) { root.finishNativeConversation(lines); }
+    }
+    property Connections nativeAudioUpdates: Connections {
+        target: root.isDemo ? null : root.audioLevelTest
+        ignoreUnknownSignals: true
+        function onChanged() { root.continueNativeChecks(); }
+        function onStoppingChanged() { root.continueNativeChecks(); }
+    }
 
     property TranscriptionTestController transcriptionTest: TranscriptionTestController {
         engineStatus: root.engineStatus
@@ -73,44 +121,6 @@ QtObject {
     }
     function formatTime(seconds: int): string {
         return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
-    }
-    function saveBackground(text: string) {
-        backgroundText = text.trim();
-        backgroundDraft = backgroundText;
-        backgroundName = backgroundText ? "背景资料.md" : "";
-        notify(qsTr("背景已保存。"), "success");
-    }
-    function importMockBackground() {
-        backgroundDraft = Data.background();
-        notify(qsTr("背景已导入，请保存。"), "info");
-    }
-    function clearBackground() {
-        backgroundText = "";
-        backgroundDraft = "";
-        backgroundName = "";
-        notify(qsTr("背景已清空。"), "success");
-    }
-    function applyModel(endpoint: string, key: string, model: string): bool {
-        if (!endpoint.trim() || !model.trim()) {
-            notify(qsTr("请填写 API 地址和模型名称。"), "error");
-            return false;
-        }
-        apiEndpoint = endpoint.trim();
-        apiKey = key;
-        modelName = model.trim();
-        connectionStatus = "idle";
-        connectionTimer.stop();
-        return true;
-    }
-    function saveModel(endpoint: string, key: string, model: string) {
-        if (applyModel(endpoint, key, model))
-            notify(qsTr("模型配置已保存。"), "success");
-    }
-    function testConnection(endpoint: string, key: string, model: string) {
-        if (!applyModel(endpoint, key, model))
-            return;
-        connectionStatus = "testing";
-        connectionTimer.restart();
     }
     function saveAudio(system: string, mic: string) {
         systemDevice = system;
@@ -138,36 +148,72 @@ QtObject {
         route = "record";
     }
     function renameRecord(id: string, title: string) {
-        if (!title.trim()) {
+        const name = title.trim();
+        if (!name) {
             notify(qsTr("名称不能为空。"), "error");
             return;
         }
-        records = records.map(function (item) {
-            return item.id === id ? Object.assign({}, item, {
-                title: title.trim()
-            }) : item;
-        });
+        const withNewTitle = item => item.id === id ? Object.assign({}, item, { title: name }) : item;
+        if (isDemo)
+            demoRecords = demoRecords.map(withNewTitle);
+        else if (unsavedRecords.some(item => item.id === id)) {
+            unsavedRecords = unsavedRecords.map(withNewTitle);
+            return;
+        } else if (!conversationStore.renameRecord(id, name)) {
+            notify(conversationStore.errorMessage || qsTr("无法重命名对话记录。"), "error");
+            return;
+        }
         notify(qsTr("名称已更新。"), "success");
     }
     function deleteRecord(id: string) {
-        records = records.filter(function (item) {
-            return item.id !== id;
-        });
+        if (isDemo)
+            demoRecords = demoRecords.filter(item => item.id !== id);
+        else if (unsavedRecords.some(item => item.id === id))
+            unsavedRecords = unsavedRecords.filter(item => item.id !== id);
+        else if (!conversationStore.deleteRecord(id)) {
+            notify(conversationStore.errorMessage || qsTr("无法删除对话记录。"), "error");
+            return;
+        }
         if (selectedRecordId === id) {
             selectedRecordId = "";
             route = "history";
         }
         notify(qsTr("记录已删除。"), "success");
     }
+    function retryRecordSave(id: string): bool {
+        const unsaved = unsavedRecords.find(item => item.id === id);
+        if (!unsaved || !conversationStore)
+            return false;
+        const record = Object.assign({}, unsaved);
+        delete record.unsaved;
+        if (!conversationStore.saveRecord(record)) {
+            notify(conversationStore.errorMessage || qsTr("无法保存对话记录。"), "error");
+            return false;
+        }
+        unsavedRecords = unsavedRecords.filter(item => item.id !== id);
+        notify(qsTr("对话记录已保存。"), "success");
+        return true;
+    }
     function exportRecord(id: string) {
-        if (records.some(function (item) {
+        if (isDemo && records.some(function (item) {
             return item.id === id;
         }))
             notify(qsTr("Markdown 内容已准备。"), "info");
     }
     function startChecks() {
-        if (interviewActive)
+        if (interviewActive || (!isDemo && preflightVisible && checkState === "checking"))
             return;
+        if (!isDemo) {
+            checkState = "checking";
+            nativeCheckMessage = qsTr("正在准备实时转写…");
+            preflightVisible = true;
+            if (offlineTranscription?.opened && !offlineTranscription.conversationActive)
+                offlineTranscription.close();
+            if (audioLevelTest?.active)
+                audioLevelTest.stop();
+            continueNativeChecks();
+            return;
+        }
         transcriptionTest.close();
         checkTimer.stop();
         checkStep = 0;
@@ -176,14 +222,74 @@ QtObject {
         checkTimer.start();
     }
     function cancelChecks() {
+        const abortStart = nativeStarting;
+        nativeStarting = false;
         checkTimer.stop();
         preflightVisible = false;
         checkState = "idle";
         checkStep = 0;
+        nativeCheckMessage = "";
+        if (abortStart && offlineTranscription?.conversationActive)
+            offlineTranscription.abortConversation();
     }
     function retryChecks() {
-        startScenario = "success";
+        if (isDemo)
+            startScenario = "success";
         startChecks();
+    }
+    function openConversationEngineSettings() {
+        cancelChecks();
+        route = "offline";
+    }
+    function failNativeChecks(message: string) {
+        nativeStarting = false;
+        checkState = "failed";
+        nativeCheckMessage = message;
+    }
+    function continueNativeChecks() {
+        if (isDemo || !preflightVisible || checkState !== "checking" || nativeStarting)
+            return;
+        if (!offlineTranscription) {
+            failNativeChecks(qsTr("离线转写服务不可用。"));
+            return;
+        }
+        if (offlineTranscription.engineStatus !== "ready") {
+            failNativeChecks(offlineTranscription.engineError || qsTr("请先加载离线转写模型。"));
+            return;
+        }
+        if (audioLevelTest?.active || audioLevelTest?.stopping || offlineTranscription.opened) {
+            nativeCheckMessage = qsTr("正在等待音频测试释放设备…");
+            return;
+        }
+        nativeCheckMessage = qsTr("正在启动实时转写…");
+        nativeStarting = true;
+        nativeStartCallActive = true;
+        const accepted = offlineTranscription.startConversation();
+        nativeStartCallActive = false;
+        if (!accepted)
+            failNativeChecks(offlineTranscription.errorMessage || qsTr("无法启动实时转写。"));
+        observeNativeStart();
+    }
+    function observeNativeStart() {
+        if (nativeStartCallActive)
+            return;
+        if (interviewActive && !interviewEnding) {
+            const state = offlineTranscription.status;
+            if (state === "pausing" || state === "paused")
+                paused = true;
+            else if (state === "running" || state === "resuming")
+                paused = false;
+        } else if (nativeStarting) {
+            if (offlineTranscription.conversationActive && offlineTranscription.status === "running") {
+                nativeStarting = false;
+                const name = (offlineTranscription.modelPath || "").split(/[\\/]/).pop();
+                startInterview(conversationStore.newRecordId(), name || qsTr("离线转写"));
+            } else if (offlineTranscription.status === "error") {
+                failNativeChecks(offlineTranscription.errorMessage || qsTr("无法启动实时转写。"));
+            }
+        } else {
+            continueNativeChecks();
+        }
     }
     function advanceCheck() {
         if (!preflightVisible || checkState !== "checking")
@@ -202,13 +308,21 @@ QtObject {
     function beginInterview() {
         if (interviewActive)
             return;
+        if (!isDemo) {
+            startChecks();
+            return;
+        }
         transcriptionTest.close();
-        cancelChecks();
         sessionSequence++;
-        sessionId = "session-" + Date.now() + "-" + sessionSequence;
-        sessionDate = Qt.formatDateTime(new Date(), "yyyy-MM-dd hh:mm");
+        startInterview("session-" + Date.now() + "-" + sessionSequence, modelName);
+    }
+    function startInterview(id: string, engine: string) {
+        cancelChecks();
+        sessionId = id;
+        sessionStartedAt = Date.now();
+        sessionDate = Qt.formatDateTime(new Date(sessionStartedAt), "yyyy-MM-dd hh:mm");
         sessionBackground = backgroundText;
-        sessionModel = modelName;
+        sessionModel = engine;
         messages = [];
         currentQuestions = [];
         question = "";
@@ -223,15 +337,28 @@ QtObject {
         repliedQuestionIndex = -1;
         elapsedSeconds = 0;
         paused = false;
+        interviewEnding = false;
         transcriptCollapsed = false;
         answerCollapsed = false;
+        if (!isDemo)
+            conversationAdvice?.beginSession(sessionBackground);
         interviewActive = true;
-        queueQuestion(0);
+        if (isDemo)
+            queueQuestion(0);
+        else
+            forwardAdviceTranscript();
         interviewStarted();
     }
+    function forwardAdviceTranscript() {
+        if (!isDemo && interviewActive && conversationAdvice)
+            conversationAdvice.considerTranscript(offlineTranscription?.conversationLines ?? []);
+    }
     function togglePause() {
-        if (interviewActive)
-            paused = !paused;
+        if (!interviewActive || interviewEnding)
+            return;
+        const desired = !paused;
+        if (isDemo || offlineTranscription.setConversationPaused(desired))
+            paused = desired;
     }
     function queueQuestion(index: int) {
         if (!interviewActive || paused || index < 0 || index >= samples.length)
@@ -287,9 +414,11 @@ QtObject {
         currentQuestions = next;
     }
     function advanceSession() {
-        if (!interviewActive || paused)
+        if (!interviewActive || paused || interviewEnding)
             return;
         elapsedSeconds++;
+        if (!isDemo)
+            return;
         if (elapsedSeconds % 18 === 8 && questionIndex >= 0 && repliedQuestionIndex !== questionIndex && samples[questionIndex].reply) {
             messages = messages.concat([
                 {
@@ -304,23 +433,61 @@ QtObject {
             queueQuestion(questionIndex + 1);
     }
     function finishInterview() {
+        if (!interviewActive || interviewEnding)
+            return;
+        if (!isDemo) {
+            interviewEnding = true;
+            if (offlineTranscription?.conversationActive)
+                offlineTranscription.stopConversation();
+            else
+                finishNativeConversation(offlineTranscription?.lines ?? []);
+            return;
+        }
+        completeInterview(messages.slice(), currentQuestions.slice());
+    }
+    function transcriptMessages(lines) {
+        return Array.from(lines).map(line => ({
+            id: line.id,
+            source: line.source,
+            role: line.source === "mic" ? "me" : "other",
+            time: line.time,
+            text: line.text,
+            final: !!line.final,
+            incomplete: !!line.incomplete
+        }));
+    }
+    function finishNativeConversation(lines) {
         if (!interviewActive)
             return;
+        interviewEnding = true;
+        const questions = Array.from(conversationAdvice?.finishSession() ?? []);
+        completeInterview(transcriptMessages(lines), questions);
+    }
+    function completeInterview(transcript, questions) {
         interviewActive = false;
+        interviewEnding = false;
         paused = false;
-        // Snapshot before resetting live state; prior sessions never share mutable arrays.
         const record = {
             id: sessionId,
-            title: "对话 · " + sessionDate,
+            title: qsTr("对话 · %1").arg(sessionDate),
             date: sessionDate,
+            startedAt: sessionStartedAt,
             duration: elapsedSeconds < 60 ? elapsedSeconds + " 秒" : Math.floor(elapsedSeconds / 60) + " 分钟",
             model: sessionModel,
-            isDemo: true,
-            questions: currentQuestions.slice(),
-            transcript: messages.slice(),
+            isDemo: isDemo,
+            questions: questions,
+            transcript: transcript,
             backgroundText: sessionBackground
         };
-        records = [record].concat(records);
+        let failure = "";
+        if (isDemo) {
+            demoRecords = [record].concat(demoRecords);
+        } else if (!conversationStore.saveRecord(record)) {
+            failure = conversationStore.errorMessage || qsTr("无法保存对话记录。");
+            unsavedRecords = [Object.assign({}, record, { unsaved: true })].concat(unsavedRecords);
+        } else {
+            failure = offlineTranscription?.errorMessage ?? "";
+        }
         selectedRecordId = sessionId;
         route = "record";
         pendingTicks = 0;
@@ -328,21 +495,16 @@ QtObject {
         pendingQuestion = "";
         pendingTriggerKind = "";
         interviewFinished();
-        notify(qsTr("对话已结束。"), "success");
+        if (failure)
+            notify(failure, "error");
+        else
+            notify(qsTr("对话已结束。"), "success");
     }
 
     property Timer checkTimer: Timer {
         interval: root.checkInterval
         repeat: true
         onTriggered: root.advanceCheck()
-    }
-    property Timer connectionTimer: Timer {
-        interval: 850
-        onTriggered: {
-            root.connectionStatus = "connected";
-            if (root.route !== "model")
-                root.notify(qsTr("连接成功。"), "success");
-        }
     }
     property Timer engineTimer: Timer {
         interval: 950
@@ -357,7 +519,7 @@ QtObject {
     property Timer sessionTimer: Timer {
         interval: 1000
         repeat: true
-        running: root.interviewActive && !root.paused
+        running: root.interviewActive && !root.paused && !root.interviewEnding
         onTriggered: root.advanceSession()
     }
     property Timer streamTimer: Timer {

@@ -76,7 +76,7 @@ if(CHUNFE_BUILD_TESTS)
     qt_add_executable(application_quit_tests tests/application_quit_tests.cpp)
     target_compile_features(application_quit_tests PRIVATE cxx_std_23)
     target_link_libraries(application_quit_tests PRIVATE Qt6::QuickControls2 chunfe_gui chunfe_guiplugin)
-    foreach(state IN ITEMS idle active finished)
+    foreach(state IN ITEMS idle active finished unsaved)
         add_test(NAME application_quit_${state} COMMAND application_quit_tests ${state})
         set_tests_properties(application_quit_${state} PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)

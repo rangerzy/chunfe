@@ -1,5 +1,6 @@
 #include "app_fonts.h"
 #include <QCoreApplication>
+#include <QInputMethodEvent>
 #include <QQmlEngine>
 #include <QQmlContext>
 #include <QQmlExtensionPlugin>
@@ -16,6 +17,11 @@ public:
         if (!qEnvironmentVariableIsSet("QSG_DISTANCEFIELD_ANTIALIASING"))
             qputenv("QSG_DISTANCEFIELD_ANTIALIASING", "gray");
     }
+    Q_INVOKABLE void sendInputMethodText(QObject *target, const QString &preedit, const QString &commit) {
+        QInputMethodEvent event(preedit, {});
+        event.setCommitString(commit);
+        QCoreApplication::sendEvent(target, &event);
+    }
 public slots:
     void applicationAvailable() {
         QCoreApplication::setApplicationVersion(QStringLiteral("9.8.7"));
@@ -27,6 +33,7 @@ public slots:
         if (!directory.isEmpty())
             QDir().mkpath(directory);
         engine->rootContext()->setContextProperty(QStringLiteral("testArtifactDirectory"), directory);
+        engine->rootContext()->setContextProperty(QStringLiteral("testInputMethod"), this);
     }
 };
 

@@ -8,12 +8,15 @@ import TextBlock
 Rectangle {
     id: root
 
+    property string heading: qsTr("回应建议")
     property string question: ""
     property string triggerKind: ""
     property string answer: ""
     property bool generating: false
     property string pendingQuestion: ""
+    property string statusMessage: ""
     property bool collapsed: false
+    readonly property bool waitingForContent: !question && !answer && !generating
     readonly property int headerHeight: 54
 
     signal collapseRequested
@@ -50,7 +53,7 @@ Rectangle {
         Text {
             x: 45
             anchors.verticalCenter: parent.verticalCenter
-            text: qsTr("回应建议")
+            text: root.heading
             color: "#fafafa"
             font.pixelSize: 14
             font.weight: Font.DemiBold
@@ -101,6 +104,7 @@ Rectangle {
                 width: parent.width - 20
                 height: Math.max(0, parent.height - 18)
                 text: qsTr("正在准备新的回应建议…\n") + root.pendingQuestion
+                textFormat: Text.PlainText
                 color: "#d4d4d8"
                 font.pixelSize: 12
                 wrapMode: Text.Wrap
@@ -113,6 +117,17 @@ Rectangle {
             width: parent.width
             visible: root.generating
             text: qsTr("正在生成回应建议…")
+            font.pixelSize: 12
+            color: "#d4d4d8"
+        }
+        Text {
+            width: parent.width
+            visible: !root.waitingForContent && text.length > 0
+            text: root.statusMessage
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            maximumLineCount: 3
+            elide: Text.ElideRight
             font.pixelSize: 12
             color: "#d4d4d8"
         }
@@ -150,9 +165,11 @@ Rectangle {
                 font.pixelSize: 12
             }
             Text {
+                objectName: "adviceQuestionText"
                 width: parent.width
                 visible: root.question.length > 0
                 text: root.question
+                textFormat: Text.PlainText
                 color: "#d4d4d8"
                 font.pixelSize: 14
                 wrapMode: Text.Wrap
@@ -183,7 +200,7 @@ Rectangle {
             }
             Column {
                 width: parent.width
-                visible: !root.question && !root.answer
+                visible: root.waitingForContent
                 spacing: 12
                 topPadding: 42
                 AppIcon {
@@ -193,8 +210,11 @@ Rectangle {
                     color: "#d4d4d8"
                 }
                 Text {
+                    objectName: "answerEmptyState"
                     width: parent.width
-                    text: qsTr("等待需要回应的内容")
+                    text: root.statusMessage || qsTr("等待需要回应的内容")
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
                     color: "#fafafa"
                     font.pixelSize: 16

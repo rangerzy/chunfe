@@ -21,6 +21,7 @@ class OfflineTranscriptionLifecycleTests : public QObject {
     Q_OBJECT
 private:
     QTemporaryDir m_settings;
+    QString m_configFilePath;
     QTemporaryDir m_modelDir;
     QString m_model;
     QLibrary m_fake{QString::fromUtf8(FAKE_RUNTIME_PATH)};
@@ -43,12 +44,22 @@ private:
         c.m_captureId = id;
         return id;
     }
-    void emitDualAudio(AudioPiplineManager &manager, const CaptureId &id, bool voice) {
+    CaptureId startConversationSignals(OfflineTranscriptionController &c, AudioPiplineManager &manager) {
+        c.setDevices(QStringLiteral("mic"), QStringLiteral("spk"));
+        if (!c.startConversation()) return {};
+        c.m_captureId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        c.m_attemptedSources = 3;
+        emit manager.captureChanged({c.m_captureId, CaptureState::Running});
+        if (!workerBarrier(c)) return {};
+        QCoreApplication::processEvents();
+        return c.m_captureId;
+    }
+    void emitDualAudio(AudioPiplineManager &manager, const CaptureId &id, bool voice, std::uint32_t epoch = 0) {
         QByteArray pcm(6400, '\0');
         if (voice) for (int i = 0; i < pcm.size(); i += 2)
             qToLittleEndian<qint16>((i / 2) % 2 ? 1000 : -1000, reinterpret_cast<uchar *>(pcm.data() + i));
-        emit manager.pcmReady(id, 0, AudioSource::Mic, {pcm});
-        emit manager.pcmReady(id, 0, AudioSource::Spk, {pcm});
+        emit manager.pcmReady(id, epoch, AudioSource::Mic, {pcm});
+        emit manager.pcmReady(id, epoch, AudioSource::Spk, {pcm});
     }
     void closeInjectedCapture(OfflineTranscriptionController &c) {
         c.m_captureId.clear();
@@ -66,8 +77,7 @@ private:
     bool load(OfflineTranscriptionController &c) {
         c.m_runtimePath = QString::fromUtf8(FAKE_RUNTIME_PATH);
         c.m_vadModelPath = m_model;
-        c.saveModelPath(m_model);
-        c.loadEngine();
+        c.loadEngine(m_model);
         QElapsedTimer timer; timer.start();
         while (c.engineStatus() == QStringLiteral("starting") && timer.elapsed() < 5000)
             QTest::qWait(10);
@@ -101,10 +111,7 @@ private slots:
     void initTestCase() {
         QVERIFY(m_settings.isValid());
         QVERIFY(m_modelDir.isValid());
-        QCoreApplication::setOrganizationName(QStringLiteral("ChunfeOfflineLifecycleTests"));
-        QCoreApplication::setApplicationName(QStringLiteral("Controller"));
-        QSettings::setDefaultFormat(QSettings::IniFormat);
-        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_settings.path());
+        m_configFilePath = m_settings.filePath(QStringLiteral("config.ini"));
         m_model = m_modelDir.filePath(QStringLiteral("model.gguf"));
         QFile model(m_model); QVERIFY(model.open(QIODevice::WriteOnly));
         QCOMPARE(model.write("test model"), qint64(10));
@@ -116,9 +123,158 @@ private slots:
         frameCount = reinterpret_cast<FrameCounter>(m_fake.resolve("offline_fake_frame_count"));
         QVERIFY(resetCounters && pushCount && finishCount && startCount && frameCount);
     }
+    void remembersOnlySuccessfullyLoadedModels() {
+        const QString modelKey = QStringLiteral("offlineTranscription/modelPath");
+        const QString runtimeKey = QStringLiteral("offlineTranscription/runtimePath");
+        const QString modelIdKey = QStringLiteral("modelConnection/modelId");
+        const QString modelId = QStringLiteral("saved-model-id");
+        const QString previousPath = QStringLiteral("/models/previous.gguf");
+        QSettings settings(m_configFilePath, QSettings::IniFormat);
+        settings.setValue(modelKey, previousPath);
+        settings.setValue(runtimeKey, QStringLiteral("/old/runtime"));
+        settings.setValue(modelIdKey, modelId);
+        settings.sync();
+
+        AudioPiplineManager manager;
+        {
+            OfflineTranscriptionController c(manager, m_configFilePath);
+            QCOMPARE(c.modelPath(), previousPath);
+            QCOMPARE(c.engineStatus(), QStringLiteral("stopped"));
+            QVERIFY(c.attemptedModelPath().isEmpty());
+            c.m_vadModelPath = m_model;
+
+            // An existing but invalid runtime reaches the asynchronous failure path.
+            c.m_runtimePath = m_model;
+            QVERIFY(QMetaObject::invokeMethod(&c, "loadEngine", m_model));
+            QTRY_COMPARE(c.engineStatus(), QStringLiteral("error"));
+            QVERIFY(!c.engineError().isEmpty());
+            QCOMPARE(c.attemptedModelPath(), m_model);
+            QCOMPARE(c.modelPath(), previousPath);
+            QCOMPARE(QSettings(m_configFilePath, QSettings::IniFormat).value(modelKey).toString(), previousPath);
+
+            c.m_runtimePath = QString::fromUtf8(FAKE_RUNTIME_PATH);
+            QVERIFY(QMetaObject::invokeMethod(&c, "loadEngine", QStringLiteral(" %1 ").arg(m_model)));
+            QTRY_COMPARE(c.engineStatus(), QStringLiteral("ready"));
+            QCOMPARE(c.modelPath(), m_model);
+            QSettings persisted(m_configFilePath, QSettings::IniFormat);
+            QCOMPARE(persisted.value(modelKey).toString(), m_model);
+            QCOMPARE(persisted.value(runtimeKey).toString(), QStringLiteral("/old/runtime"));
+            QCOMPARE(persisted.value(modelIdKey).toString(), modelId);
+
+            c.unloadEngine();
+            QCOMPARE(c.engineStatus(), QStringLiteral("stopping"));
+            QTRY_COMPARE(c.engineStatus(), QStringLiteral("stopped"));
+            QCOMPARE(c.modelPath(), m_model);
+        }
+        OfflineTranscriptionController reopened(manager, m_configFilePath);
+        QCOMPARE(reopened.modelPath(), m_model);
+        QVERIFY(reopened.attemptedModelPath().isEmpty());
+        QCOMPARE(reopened.engineStatus(), QStringLiteral("stopped"));
+    }
+    void settingsWriteFailureKeepsTheEngineReadyAndReportsTheError() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QFile blocker(dir.filePath(QStringLiteral("file")));
+        QVERIFY(blocker.open(QIODevice::WriteOnly));
+        blocker.close();
+
+        AudioPiplineManager manager;
+        OfflineTranscriptionController c(manager, dir.filePath(QStringLiteral("file/config.ini")));
+        QVERIFY2(load(c), qPrintable(c.engineError()));
+        QCOMPARE(c.modelPath(), m_model);
+        QVERIFY(!c.engineError().isEmpty());
+    }
+    void conversationAbortKeepsFullTranscriptAndClearsItOnNextStart() {
+        AudioPiplineManager manager;
+        OfflineTranscriptionController c(manager, m_configFilePath);
+        QSignalSpy finished(&c, &OfflineTranscriptionController::conversationFinished);
+        QVERIFY2(load(c), qPrintable(c.engineError()));
+        const auto id = startConversationSignals(c, manager);
+        QVERIFY(!id.isEmpty());
+        QVERIFY(c.conversationActive());
+        c.open();
+        QVERIFY(!c.opened());
+        for (int i = 0; i < 50; ++i)
+            c.applyResult(2, {{QString::number(i)}, {}, true}, false);
+        c.applyResult(1, {{}, QStringLiteral("mic draft"), true}, false);
+        QCOMPARE(c.conversationLines().size(), 40);
+
+        c.abortConversation();
+        QVERIFY(!c.conversationActive());
+        QCOMPARE(finished.size(), 1);
+        const auto transcript = finished.first().first().toList();
+        QCOMPARE(c.lines(), transcript);
+        QCOMPARE(transcript.size(), 51);
+        QCOMPARE(transcript.first().toMap().value("text").toString(), QStringLiteral("0"));
+        QVERIFY(transcript.last().toMap().value("incomplete").toBool());
+        c.abortConversation();
+        QCOMPARE(finished.size(), 1);
+        emit manager.captureChanged({id, CaptureState::Idle});
+
+        QVERIFY(!startConversationSignals(c, manager).isEmpty());
+        emitDualAudio(manager, id, true);
+        QVERIFY(workerBarrier(c));
+        QCoreApplication::processEvents();
+        QVERIFY(c.lines().isEmpty());
+        c.abortConversation();
+        QCOMPARE(finished.size(), 2);
+    }
+    void conversationStopDrainsBothSourcesAfterCaptureEnds() {
+        AudioPiplineManager manager;
+        OfflineTranscriptionController c(manager, m_configFilePath);
+        QSignalSpy finished(&c, &OfflineTranscriptionController::conversationFinished);
+        QVERIFY2(load(c), qPrintable(c.engineError()));
+        const auto id = startConversationSignals(c, manager);
+        QVERIFY(!id.isEmpty());
+        resetCounters();
+        for (int n = 0; n < 4; ++n) emitDualAudio(manager, id, true);
+        c.stopConversation();
+        QCOMPARE(c.status(), QStringLiteral("stopping"));
+        drainInjectedCapture(c, manager, id);
+        QTRY_COMPARE(finished.size(), 1);
+        const auto lines = finished.first().first().toList();
+        QVERIFY(!c.conversationActive());
+        QCOMPARE(c.status(), QStringLiteral("stopped"));
+        QCOMPARE(finishCount(0), 2);
+        QCOMPARE(lines.size(), 2);
+        for (auto line : lines) QVERIFY(line.toMap().value("final").toBool());
+        QCOMPARE(lines.first().toMap().value("source").toString(), QStringLiteral("mic"));
+        QCOMPARE(lines.last().toMap().value("source").toString(), QStringLiteral("spk"));
+    }
+    void conversationPauseSealsAcceptedTailBeforeNextCaptureEpoch() {
+        AudioPiplineManager manager;
+        OfflineTranscriptionController c(manager, m_configFilePath);
+        QVERIFY2(load(c), qPrintable(c.engineError()));
+        const auto id = startConversationSignals(c, manager);
+        QVERIFY(!id.isEmpty());
+        resetCounters();
+        for (int n = 0; n < 4; ++n) emitDualAudio(manager, id, true);
+
+        c.m_status = QStringLiteral("pausing");
+        emit manager.captureChanged({id, CaptureState::Paused});
+        QCOMPARE(c.status(), QStringLiteral("paused"));
+        emitDualAudio(manager, id, true);
+        QTRY_COMPARE(c.lines().size(), 2);
+        for (auto line : c.lines()) QVERIFY(line.toMap().value("final").toBool());
+
+        c.m_status = QStringLiteral("resuming");
+        emit manager.captureChanged({id, CaptureState::Running, 1});
+        QCOMPARE(c.status(), QStringLiteral("running"));
+        const auto pendingBytes = c.m_pendingBytes[0];
+        emitDualAudio(manager, id, true); // Old epoch must stay sealed.
+        QCOMPARE(c.m_pendingBytes[0], pendingBytes);
+        for (int n = 0; n < 4; ++n) emitDualAudio(manager, id, true, 1);
+        c.stopConversation();
+        emit manager.pcmEnded(id, 1, AudioSource::Mic, 0);
+        emit manager.pcmEnded(id, 1, AudioSource::Spk, 0);
+        emit manager.captureChanged({id, CaptureState::Idle, 1});
+        QTRY_COMPARE(c.status(), QStringLiteral("stopped"));
+        QCOMPARE(c.lines().size(), 4);
+        QCOMPARE(finishCount(0), 4);
+    }
     void silentDualCaptureDoesNotInvokeInference() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -134,7 +290,7 @@ private slots:
         qputenv("OFFLINE_FAKE_VAD_SCENARIO", "1");
         const auto restore = qScopeGuard([] { qunsetenv("OFFLINE_FAKE_VAD_SCENARIO"); });
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -201,7 +357,7 @@ private slots:
     }
     void closeSkipsQueuedInferenceBeforeExecution() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -224,7 +380,7 @@ private slots:
     }
     void timeoutSkipsQueuedInferenceAndFinalization() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -251,7 +407,7 @@ private slots:
     }
     void timeoutRejectsLateAudioFromDrainingCapture() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -270,7 +426,7 @@ private slots:
     }
     void failingLastSourceCompletesAnAlreadyDrainedStop() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         c.m_opened = true;
         c.m_status = QStringLiteral("stopping");
         c.m_captureEnded = true;
@@ -282,7 +438,7 @@ private slots:
     }
     void stopDuringStreamStartupDoesNotRequestPermissionOrStartCapture() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         c.setDevices(QStringLiteral("test-mic"), {});
         c.open();
@@ -298,7 +454,7 @@ private slots:
     }
     void closeDuringStreamStartupDiscardsLateCompletion() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         c.setDevices(QStringLiteral("test-mic"), {});
         c.open();
@@ -313,7 +469,7 @@ private slots:
     }
     void timeoutMarksTailIncompleteAndRetainsEngine() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         c.m_opened = true;
         c.m_status = QStringLiteral("stopping");
@@ -331,7 +487,7 @@ private slots:
     }
     void twoPcmSourcesAndStreamEndProduceIndependentFinals() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -367,7 +523,7 @@ private slots:
     }
     void lateCaptureSignalsDoNotConsumeNewCaptureTail() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -395,7 +551,7 @@ private slots:
     }
     void trailingCaptureGapKeepsAcceptedTail() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -415,7 +571,7 @@ private slots:
     }
     void stopDrainsAcceptedVadTailNearBacklogLimit() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c, false);
         QVERIFY(!id.isEmpty());
@@ -453,7 +609,7 @@ private slots:
     }
     void continuousMicStaysOpenUntilFinalWhileSpkEndsIndependently() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -540,7 +696,7 @@ private slots:
         qputenv("OFFLINE_FAKE_VAD_SCENARIO", "1");
         const auto restore = qScopeGuard([] { qunsetenv("OFFLINE_FAKE_VAD_SCENARIO"); });
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
         QVERIFY(!id.isEmpty());
@@ -614,7 +770,7 @@ private slots:
     }
     void vadEndOnlySubmitsSpeechAndTwoHundredMillisecondsOfTail() {
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         QVERIFY2(load(c), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c, false);
         QVERIFY(!id.isEmpty());
@@ -656,10 +812,9 @@ private slots:
         pcm.truncate(115200); // Non-integral window exercises finish() tail handling.
 
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
-        c.saveModelPath(model);
+        OfflineTranscriptionController c(manager, m_configFilePath);
         qInfo().noquote() << "Bundled runtime:" << c.m_runtimePath;
-        c.loadEngine();
+        c.loadEngine(model);
         QTRY_VERIFY_WITH_TIMEOUT(c.engineStatus() != QStringLiteral("starting"), 120000);
         QVERIFY2(c.engineStatus() == QStringLiteral("ready"), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c);
@@ -722,9 +877,8 @@ private slots:
             .repeated((DurationMs + TileMs - 1) / TileMs).first(DurationMs * PcmBytesPerMs);
 
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
-        c.saveModelPath(model);
-        c.loadEngine();
+        OfflineTranscriptionController c(manager, m_configFilePath);
+        c.loadEngine(model);
         QTRY_VERIFY_WITH_TIMEOUT(c.engineStatus() != QStringLiteral("starting"), 120000);
         QVERIFY2(c.engineStatus() == QStringLiteral("ready"), qPrintable(c.engineError()));
         const auto id = startCaptureSignals(c, false);

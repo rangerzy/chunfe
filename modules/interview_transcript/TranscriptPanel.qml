@@ -10,10 +10,12 @@ Item {
 
     property var messages: []
     property bool paused: false
+    property bool finishing: false
     property bool collapsed: false
     property string elapsedText: "00:00"
     property string statusText: qsTr("春风正在聆听")
     property url logoSource
+    property bool initialized: false
     readonly property int headerHeight: 64
 
     signal pauseRequested
@@ -26,7 +28,7 @@ Item {
 
     function followLatest() {
         transcript.following = true;
-        transcript.contentY = Math.max(0, transcript.contentHeight - transcript.height);
+        transcript.positionViewAtEnd();
     }
 
     function updateScroll() {
@@ -38,11 +40,54 @@ Item {
         }
     }
 
-    onMessagesChanged: updateScroll()
+    function entryId(message, index) {
+        return message.id === undefined ? "sample-" + index : String(message.id);
+    }
+
+    function syncMessages() {
+        if (messages.length === 0) {
+            transcriptModel.clear();
+            transcript.following = true;
+            return;
+        }
+        const firstId = entryId(messages[0], 0);
+        while (transcriptModel.count && transcriptModel.get(0).entryId !== firstId)
+            transcriptModel.remove(0);
+        for (let i = 0; i < messages.length; ++i) {
+            const message = messages[i];
+            const value = {
+                entryId: entryId(message, i),
+                isMe: message.source === "mic" || (!message.source && message.role === "me"),
+                channel: String(message.source || ""),
+                contentText: String(message.text || ""),
+                incomplete: message.incomplete === true
+            };
+            if (i < transcriptModel.count && transcriptModel.get(i).entryId !== value.entryId)
+                transcriptModel.remove(i, transcriptModel.count - i);
+            if (i < transcriptModel.count)
+                transcriptModel.set(i, value);
+            else
+                transcriptModel.append(value);
+        }
+        if (transcriptModel.count > messages.length)
+            transcriptModel.remove(messages.length, transcriptModel.count - messages.length);
+        updateScroll();
+    }
+
+    onMessagesChanged: {
+        if (initialized)
+            syncMessages();
+    }
+    Component.onCompleted: {
+        initialized = true;
+        syncMessages();
+    }
     onCollapsedChanged: {
         if (!collapsed)
             updateScroll();
     }
+
+    ListModel { id: transcriptModel }
 
     Rectangle {
         id: header
@@ -85,7 +130,7 @@ Item {
             spacing: 4
             Text {
                 width: parent.width
-                text: root.paused ? qsTr("春风已暂停") : root.statusText
+                text: root.paused && !root.finishing ? qsTr("春风已暂停") : root.statusText
                 color: "#fafafa"
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
@@ -93,7 +138,8 @@ Item {
             }
             Text {
                 width: parent.width
-                text: root.elapsedText + "  ·  " + (root.paused ? qsTr("暂停接收新内容") : qsTr("实时转写"))
+                text: root.elapsedText + "  ·  " + (root.finishing ? qsTr("处理剩余音频")
+                                                   : root.paused ? qsTr("暂停接收新内容") : qsTr("实时转写"))
                 color: "#d4d4d8"
                 font.pixelSize: 12
                 elide: Text.ElideRight
@@ -110,6 +156,7 @@ Item {
                 objectName: "transcriptPauseButton"
                 iconName: root.paused ? "play" : "pause"
                 text: root.paused ? qsTr("继续对话") : qsTr("暂停对话")
+                enabled: !root.finishing
                 dark: true
                 onClicked: root.pauseRequested()
             }
@@ -124,6 +171,7 @@ Item {
                 objectName: "interviewFinishButton"
                 iconName: "stop"
                 text: qsTr("结束对话")
+                enabled: !root.finishing
                 dark: true
                 onClicked: root.finishRequested()
             }
@@ -139,15 +187,15 @@ Item {
         visible: !root.collapsed
         opacity: 1
 
-        Flickable {
+        ListView {
             id: transcript
             objectName: "transcriptScroll"
             anchors.fill: parent
             anchors.bottomMargin: 0
             anchors.leftMargin: 2
             anchors.rightMargin: 2
-            contentWidth: width
-            contentHeight: lines.height
+            spacing: 8
+            model: transcriptModel
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             property bool following: true
@@ -166,76 +214,71 @@ Item {
                 }
             }
 
-            Column {
-                id: lines
+            delegate: Item {
+                id: line
+                required property bool isMe
+                required property string channel
+                required property string contentText
+                required property bool incomplete
                 width: transcript.width - 8
-                spacing: 8
-                Repeater {
-                    model: root.messages
-                    delegate: Item {
-                        id: line
-                        required property var modelData
-                        readonly property bool isMe: modelData.role === "me"
-                        width: lines.width
-                        height: Math.max(26, bubble.implicitHeight)
+                height: Math.max(26, bubble.implicitHeight)
 
-                        Rectangle {
-                            x: line.isMe ? line.width - width : 0
-                            y: 3
-                            width: 26
-                            height: 26
-                            radius: 13
-                            color: line.isMe ? "#3f3f46" : "#18181b"
-                            border.color: "#52525b"
-                            Text {
-                                anchors.centerIn: parent
-                                text: line.isMe ? qsTr("我") : qsTr("对方")
-                                color: "#e4e4e7"
-                                font.pixelSize: 12
-                            }
-                        }
+                Rectangle {
+                    x: line.isMe ? line.width - width : 0
+                    y: 3
+                    width: line.channel ? 30 : 26
+                    height: 26
+                    radius: 13
+                    color: line.isMe ? "#3f3f46" : "#18181b"
+                    border.color: "#52525b"
+                    Text {
+                        objectName: "liveTranscriptSource"
+                        anchors.centerIn: parent
+                        text: line.channel ? line.channel.toUpperCase() : line.isMe ? qsTr("我") : qsTr("对方")
+                        color: "#e4e4e7"
+                        font.pixelSize: 12
+                    }
+                }
 
-                        TextBlock {
-                            id: bubble
-                            x: line.isMe ? line.width - width - 34 : 34
-                            width: implicitWidth
-                            height: implicitHeight
-                            maximumWidth: Math.max(80, line.width - 76)
-                            padding: 10
-                            font.pixelSize: 15
-                            textColor: "#fafafa"
-                            content: ({
-                                    text: String(line.modelData.text || ""),
-                                    ranges: []
-                                })
-                            background: Rectangle {
-                                color: line.isMe ? "#3f3f46" : "#18181b"
-                                radius: 10
-                                border.color: "#52525b"
-                            }
-                        }
+                TextBlock {
+                    id: bubble
+                    x: line.isMe ? line.width - width - 38 : 38
+                    width: implicitWidth
+                    height: implicitHeight
+                    maximumWidth: Math.max(80, line.width - 76)
+                    padding: 10
+                    font.pixelSize: 15
+                    textColor: "#fafafa"
+                    content: ({
+                            text: line.contentText + (line.incomplete ? qsTr("（未完成）") : ""),
+                            ranges: []
+                        })
+                    background: Rectangle {
+                        color: line.isMe ? "#3f3f46" : "#18181b"
+                        radius: 10
+                        border.color: "#52525b"
                     }
                 }
             }
+        }
 
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: transcript.contentY + 35
-                width: Math.min(parent.width - 64, 280)
-                height: 82
-                visible: root.messages.length === 0
-                color: "#18181b"
-                radius: 8
-                Text {
-                    anchors.fill: parent
-                    anchors.margins: 16
-                    text: qsTr("等待对话…")
-                    color: "#d4d4d8"
-                    font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    wrapMode: Text.Wrap
-                }
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 35
+            width: Math.min(parent.width - 64, 280)
+            height: 82
+            visible: transcript.count === 0
+            color: "#18181b"
+            radius: 8
+            Text {
+                anchors.fill: parent
+                anchors.margins: 16
+                text: qsTr("等待对话…")
+                color: "#d4d4d8"
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.Wrap
             }
         }
 

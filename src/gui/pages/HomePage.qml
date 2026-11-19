@@ -7,6 +7,18 @@ import Chunfe.Ui
 PageFrame {
     id: root
     required property var controller
+    property string modelVerificationStatus: "unconfigured"
+    property bool modelVerificationRestored: false
+    property string offlineEngineStatus: "stopped"
+    readonly property string modelStatusLabel: {
+        switch (modelVerificationStatus) {
+        case "passed": return modelVerificationRestored ? qsTr("上次检测通过") : qsTr("API 连接正常")
+        case "failed": return modelVerificationRestored ? qsTr("上次检测失败") : qsTr("模型检测失败")
+        case "testing": return qsTr("模型检测中")
+        case "untested": return qsTr("模型待检测")
+        default: return qsTr("模型未配置")
+        }
+    }
     maximumContentWidth: 480
     pagePadding: 32
     centerContent: true
@@ -40,7 +52,7 @@ PageFrame {
         Label {
             Layout.fillWidth: true
             Layout.topMargin: 8
-            text: qsTr("实时转写与回应建议")
+            text: root.controller.isDemo ? qsTr("实时转写与回应建议演示") : qsTr("使用离线模型实时转写系统声音和麦克风")
             horizontalAlignment: Text.AlignHCenter
             color: Theme.muted
             font.pixelSize: 14
@@ -63,32 +75,35 @@ PageFrame {
             Layout.topMargin: 18
             spacing: 4
             Repeater {
+                objectName: "homeStatusItems"
                 model: [
                     {
                         icon: "model",
                         label: qsTr("模型"),
                         action: qsTr("配置模型"),
-                        value: root.controller.modelName || qsTr("未配置模型"),
+                        value: root.modelStatusLabel,
                         route: "model"
                     },
                     {
                         icon: "audio",
                         label: qsTr("实时转写"),
                         action: qsTr("打开音频与转写设置"),
-                        value: root.controller.engineStatus === "ready" ? qsTr("转写就绪") : root.controller.engineStatus === "starting" ? qsTr("转写启动中") : qsTr("转写未启动"),
+                        value: root.offlineEngineStatus === "ready" ? qsTr("转写就绪")
+                               : root.offlineEngineStatus === "starting" ? qsTr("转写加载中") : qsTr("转写未就绪"),
                         route: "audio"
                     },
                     {
                         icon: "file",
                         label: qsTr("背景资料"),
                         action: qsTr("编辑背景资料"),
-                        value: root.controller.backgroundText ? qsTr("背景已配置") : qsTr("未设置背景"),
+                        value: root.controller.backgroundText.trim().length > 0 ? qsTr("背景已配置") : qsTr("未设置背景"),
                         route: "background"
                     }
                 ]
                 delegate: Button {
                     id: statusButton
                     required property var modelData
+                    objectName: modelData.route + "HomeStatus"
                     implicitWidth: Math.min(154, implicitContentWidth + 20)
                     implicitHeight: 32
                     leftPadding: 10

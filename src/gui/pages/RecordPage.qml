@@ -8,13 +8,20 @@ PageFrame {
     id: root
     required property var controller
     readonly property var record: controller.selectedRecord
-    property int activeTab: 0
+    property int activeTab: root.record?.isDemo === false && !root.record.questions.length ? 1 : 0
 
     AppButton {
         variant: "ghost"
         text: qsTr("全部对话")
         iconName: "chevron-left"
         onClicked: root.controller.route = "history"
+    }
+    Label {
+        Layout.fillWidth: true
+        visible: root.record?.unsaved === true
+        text: qsTr("这条记录当前仅保存在内存中。")
+        color: Theme.danger
+        wrapMode: Text.Wrap
     }
     RowLayout {
         Layout.fillWidth: true
@@ -24,6 +31,12 @@ PageFrame {
             Layout.fillWidth: true
             title: root.record ? root.record.title : ""
             subtitle: root.record ? String(root.record.date || "") + " · " + String(root.record.duration || "") + " · " + String(root.record.model || "") : ""
+        }
+        AppButton {
+            text: qsTr("重试保存")
+            variant: "secondary"
+            visible: root.record?.unsaved === true
+            onClicked: root.controller.retryRecordSave(root.record.id)
         }
         AppButton {
             text: qsTr("重命名")
@@ -36,6 +49,7 @@ PageFrame {
         AppButton {
             text: qsTr("导出 Markdown")
             iconName: "download"
+            visible: root.record?.isDemo === true
             onClicked: root.controller.exportRecord(root.record.id)
         }
     }
@@ -50,6 +64,7 @@ PageFrame {
                 required property int index
                 required property string modelData
                 text: tabButton.modelData
+                visible: tabButton.index !== 0 || root.record?.isDemo !== false || root.record.questions.length > 0
                 variant: root.activeTab === tabButton.index ? "secondary" : "ghost"
                 onClicked: root.activeTab = tabButton.index
             }
@@ -78,7 +93,11 @@ PageFrame {
                 Layout.fillWidth: true
                 spacing: 14
                 Label {
+                    Layout.fillWidth: true
                     text: qsTr("建议 %1").arg(String(questionCard.index + 1).padStart(2, "0")) + (questionCard.modelData.kind === "request" ? qsTr(" · 请求") : questionCard.modelData.kind === "objection" ? qsTr(" · 异议") : qsTr(" · 问题"))
+                          + (questionCard.modelData.time ? " · " + questionCard.modelData.time : "")
+                          + (questionCard.modelData.incomplete === true ? qsTr(" · 未完成") : "")
+                    textFormat: Text.PlainText
                     color: Theme.muted
                     font.pixelSize: 12
                     font.weight: Font.Medium
@@ -126,15 +145,16 @@ PageFrame {
             delegate: Item {
                 id: message
                 required property var modelData
+                readonly property bool isMic: modelData.source === "mic" || (!modelData.source && modelData.role === "me")
                 Layout.fillWidth: true
                 implicitHeight: bubble.implicitHeight
                 Rectangle {
                     id: bubble
                     width: Math.min(message.width * 0.84, 640)
-                    x: message.modelData.role === "me" ? message.width - width : 0
+                    x: message.isMic ? message.width - width : 0
                     implicitHeight: messageContent.implicitHeight + 28
                     radius: 8
-                    color: message.modelData.role === "me" ? "#f4f4f5" : Theme.background
+                    color: message.isMic ? "#f4f4f5" : Theme.background
                     border.color: Theme.border
                     ColumnLayout {
                         id: messageContent
@@ -145,7 +165,9 @@ PageFrame {
                         RowLayout {
                             Layout.fillWidth: true
                             Label {
-                                text: message.modelData.role === "me" ? qsTr("我") : qsTr("对方")
+                                text: message.modelData.source === "mic" ? "MIC"
+                                      : message.modelData.source === "spk" ? "SPK"
+                                      : message.isMic ? qsTr("我") : qsTr("对方")
                                 color: Theme.muted
                                 font.pixelSize: 12
                                 font.weight: Font.Medium
@@ -161,7 +183,7 @@ PageFrame {
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: message.modelData.text
+                            text: message.modelData.text + (message.modelData.incomplete === true ? qsTr("（未完成）") : "")
                             textFormat: Text.PlainText
                             color: Theme.text
                             font.pixelSize: 15

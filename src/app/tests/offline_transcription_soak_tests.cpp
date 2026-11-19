@@ -10,7 +10,6 @@
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QScopeGuard>
-#include <QSettings>
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QUuid>
@@ -360,12 +359,8 @@ private slots:
         QVERIFY2(log.open(QIODevice::WriteOnly | QIODevice::Truncate), qPrintable(log.errorString()));
         QTemporaryDir settings;
         QVERIFY(settings.isValid());
-        QCoreApplication::setOrganizationName(QStringLiteral("ChunfeOfflineSoakTests"));
-        QCoreApplication::setApplicationName(QStringLiteral("Controller"));
-        QSettings::setDefaultFormat(QSettings::IniFormat);
-        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
         AudioPiplineManager manager;
-        OfflineTranscriptionController c(manager);
+        OfflineTranscriptionController c(manager, settings.filePath(QStringLiteral("config.ini")));
         const auto cleanup = qScopeGuard([&] { c.m_captureId.clear(); c.close(); });
         QElapsedTimer wall; wall.start();
         QString phase = QStringLiteral("baseline_unloaded");
@@ -572,8 +567,7 @@ private slots:
 #endif
         }
         beginPhase(QStringLiteral("load_engine"));
-        c.saveModelPath(model);
-        c.loadEngine();
+        c.loadEngine(model);
         QVERIFY2(waitUntil([&] { return c.engineStatus() != QStringLiteral("starting"); }, 120000), qPrintable(abortReason));
         QVERIFY2(c.engineStatus() == QStringLiteral("ready"), qPrintable(c.engineError()));
         beginPhase(QStringLiteral("loaded_idle"));

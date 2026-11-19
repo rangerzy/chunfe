@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Layouts
 import Chunfe.Ui
 import Chunfe.Transcript
 import Chunfe.Answer
@@ -14,7 +15,17 @@ ApplicationWindow {
     property var audioDevices: null
     property var audioLevelTest: null
     property var offlineTranscription: null
+    property var modelConnection: null
+    property var modelTestChat: null
+    property var backgroundDocument: null
+    property var backgroundAnalysis: null
+    property var conversationStore: null
+    property var conversationAdvice: null
     property bool applicationQuitting: false
+    property bool allowQuitWithUnsavedConversation: false
+    readonly property bool conversationBlocksQuit: demo.unsavedRecords.length > 0 && !allowQuitWithUnsavedConversation
+    readonly property bool conversationQuitPending: applicationQuitting && !demo.isDemo && demo.interviewActive
+    readonly property bool showsAnswerWindow: demo.isDemo || conversationAdvice !== null
     readonly property var transcriptionTest: offlineTranscription || demo.transcriptionTest
     readonly property alias demoController: demo
     readonly property alias transcriptVisible: transcriptWindow.visible
@@ -28,16 +39,33 @@ ApplicationWindow {
     title: qsTr("春风")
     color: Theme.background
     font.pixelSize: 14
-    onClosing: {
-        if (!applicationQuitting)
+    onClosing: function(close) {
+        if (!applicationQuitting) {
+            close.accepted = false
             Qt.quit()
+        }
     }
     onApplicationQuittingChanged: {
         if (applicationQuitting) {
-            transcriptionTest.close()
+            if (demo.route === "model")
+                window.saveModelDraft()
+            modelTestChatDialog.close()
+            backgroundAnalysis?.cancelAnalysis()
             demo.cancelChecks()
             demo.finishInterview()
+            if (transcriptionTest.opened && !offlineTranscription?.conversationActive)
+                transcriptionTest.close()
         }
+    }
+
+    function saveModelDraft() {
+        if (modelConnection?.configurationDirty)
+            modelConnection.saveModel()
+    }
+    function showUnsavedConversationQuitDialog() {
+        applicationQuitting = false
+        unsavedConversationQuitDialog.open()
+        requestActivate()
     }
 
     function closeInterviewWindow(close) {
@@ -49,19 +77,41 @@ ApplicationWindow {
 
     function positionInterviewWindows() {
         const available = Qt.rect(window.screen.virtualX, window.screen.virtualY, window.screen.width, window.screen.height)
-        transcriptWindow.width = Math.round(Math.min(480, (available.width - 72) * 0.54))
-        answerWindow.width = Math.min(400, available.width - transcriptWindow.width - 72)
-        const startX = Math.round(available.x + Math.max(24, (available.width - transcriptWindow.width - answerWindow.width - 24) / 2))
-        const startY = Math.round(available.y + Math.min(100, Math.max(40, (available.height - answerWindow.height) / 3)))
+        if (!showsAnswerWindow) {
+            transcriptWindow.width = Math.min(480, available.width - 72)
+            transcriptWindow.x = Math.round(available.x + (available.width - transcriptWindow.width) / 2)
+            transcriptWindow.y = Math.round(available.y + Math.min(100, Math.max(24, (available.height - transcriptWindow.height) / 3)))
+            return
+        }
+        const gap = 24
+        const panelWidth = Math.max(2, available.width - 2 * 24 - gap)
+        transcriptWindow.width = Math.min(480, Math.round(panelWidth * 0.54))
+        answerWindow.width = Math.min(400, panelWidth - transcriptWindow.width)
+        const startX = Math.round(available.x + (available.width - transcriptWindow.width - answerWindow.width - gap) / 2)
+        const startY = Math.round(available.y + Math.min(100, Math.max(24, (available.height - Math.max(transcriptWindow.height, answerWindow.height)) / 3)))
         transcriptWindow.x = startX; transcriptWindow.y = startY
-        answerWindow.x = startX + transcriptWindow.width + 24; answerWindow.y = startY
+        answerWindow.x = startX + transcriptWindow.width + gap; answerWindow.y = startY
     }
 
     DemoController {
         id: demo
-        onInterviewStarted: { window.transcriptionTest.close(); window.positionInterviewWindows() }
+        conversationStore: window.conversationStore
+        offlineTranscription: window.offlineTranscription
+        audioLevelTest: window.audioLevelTest
+        conversationAdvice: window.conversationAdvice
+        backgroundText: window.backgroundDocument?.backgroundText ?? ""
+        onInterviewStarted: {
+            if (demo.isDemo && window.transcriptionTest.opened)
+                window.transcriptionTest.close()
+            window.positionInterviewWindows()
+        }
         onInterviewFinished: {
-            if (!window.applicationQuitting) {
+            if (window.applicationQuitting && !demo.isDemo) {
+                Qt.callLater(() => {
+                    if (window.applicationQuitting)
+                        Qt.quit()
+                })
+            } else if (!window.applicationQuitting) {
                 window.show()
                 window.raise()
                 window.requestActivate()
@@ -92,9 +142,33 @@ ApplicationWindow {
             about: aboutPage
         })[demo.route] || homePage
     }
-    Component { id: homePage; HomePage { controller: demo } }
-    Component { id: backgroundPage; BackgroundPage { controller: demo } }
-    Component { id: modelPage; ModelPage { controller: demo } }
+    Component {
+        id: homePage
+        HomePage {
+            controller: demo
+            modelVerificationStatus: window.modelConnection?.verificationStatus ?? "unconfigured"
+            modelVerificationRestored: window.modelConnection?.verificationRestored ?? false
+            offlineEngineStatus: window.offlineTranscription?.engineStatus ?? "stopped"
+        }
+    }
+    Component {
+        id: backgroundPage
+        BackgroundPage {
+            controller: window.backgroundDocument
+            analysisController: window.backgroundAnalysis
+        }
+    }
+    Component {
+        id: modelPage
+        ModelPage {
+            controller: window.modelConnection
+            testChatAvailable: window.modelTestChat !== null
+            onTestChatRequested: {
+                if (!modelTestChatDialog.visible && window.modelTestChat?.beginSession())
+                    modelTestChatDialog.open()
+            }
+        }
+    }
     Component { id: audioPage; AudioPage { controller: demo; audioDevices: window.audioDevices; audioLevelTest: window.audioLevelTest; offlineTranscription: window.offlineTranscription } }
     Component { id: offlinePage; OfflineTranscriptionPage { controller: window.offlineTranscription } }
     Component { id: historyPage; HistoryPage { controller: demo } }
@@ -102,15 +176,78 @@ ApplicationWindow {
     Component { id: aboutPage; AboutPage {} }
 
     PreflightDialog { id: checks; objectName: "preflightDialog"; anchors.centerIn: Overlay.overlay; controller: demo }
+    Dialog {
+        id: unsavedConversationQuitDialog
+        objectName: "unsavedConversationQuitDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(440, parent ? parent.width - 40 : 440)
+        modal: true
+        focus: true
+        padding: 20
+        closePolicy: Popup.CloseOnEscape
+        title: qsTr("对话记录尚未保存")
+        background: Rectangle {
+            color: Theme.background
+            border.color: Theme.border
+            radius: Theme.radius
+        }
+        contentItem: ColumnLayout {
+            spacing: 16
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("尚未保存的转写会在退出时丢失。你可以返回应用重试保存。")
+                color: Theme.text
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                AppButton {
+                    objectName: "stayWithUnsavedConversationButton"
+                    text: qsTr("返回应用")
+                    onClicked: unsavedConversationQuitDialog.close()
+                }
+                AppButton {
+                    variant: "secondary"
+                    text: qsTr("仍然退出")
+                    onClicked: {
+                        window.allowQuitWithUnsavedConversation = true;
+                        unsavedConversationQuitDialog.close();
+                        Qt.quit();
+                    }
+                }
+            }
+        }
+    }
     TranscriptionTestDialog { anchors.centerIn: Overlay.overlay; controller: window.transcriptionTest }
+    ModelTestChatDialog {
+        id: modelTestChatDialog
+        parent: Overlay.overlay
+        controller: window.modelTestChat
+    }
     Connections {
+        target: window.modelConnection
+        function onNotification(message, severity) {
+            toast.showNotification(message, severity)
+        }
+    }
+    Connections {
+        id: routeChanges
         target: demo
+        property string previousRoute: "home"
         function onRouteChanged() {
-            if (demo.route !== "audio" && window.offlineTranscription)
+            if (routeChanges.previousRoute === "model" && demo.route !== "model") {
+                modelTestChatDialog.close()
+                window.saveModelDraft()
+            }
+            routeChanges.previousRoute = demo.route
+            if (demo.route !== "audio" && window.offlineTranscription?.opened
+                    && !window.offlineTranscription.conversationActive)
                 window.offlineTranscription.close()
         }
         function onPreflightVisibleChanged() {
-            if (demo.preflightVisible && window.offlineTranscription)
+            if (demo.isDemo && demo.preflightVisible && window.offlineTranscription?.opened
+                    && !window.offlineTranscription.conversationActive)
                 window.offlineTranscription.close()
         }
     }
@@ -129,19 +266,24 @@ ApplicationWindow {
         id: transcriptWindow
         objectName: "transcriptWindow"
         transientParent: null
-        title: qsTr("春风 · 实时对话")
+        title: demo.isDemo ? qsTr("春风 · 对话演示") : qsTr("春风 · 实时转写")
         // Cocoa Tool panels hide when another app becomes active. A regular
         // top-level window keeps these dialogue hints visible on macOS.
         flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool) | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         color: "transparent"
         width: Math.min(480, screen.width - 40)
-        height: transcriptPanel.implicitHeight
+        height: Math.min(transcriptPanel.implicitHeight, screen.height - 24)
         visible: demo.interviewActive
         onClosing: function(close) { window.closeInterviewWindow(close) }
         TranscriptPanel {
             id: transcriptPanel
             anchors.fill: parent
-            messages: demo.messages; paused: demo.paused; collapsed: demo.transcriptCollapsed; elapsedText: demo.elapsedText
+            messages: demo.isDemo ? demo.messages : demo.liveConversationMessages
+            paused: demo.paused
+            finishing: demo.interviewEnding
+            collapsed: demo.transcriptCollapsed
+            elapsedText: demo.elapsedText
+            statusText: demo.isDemo ? qsTr("春风正在聆听") : demo.nativeConversationStatus
             logoSource: "qrc:/branding/chunfe-mark.svg"
             onPauseRequested: demo.togglePause()
             onCollapseRequested: demo.transcriptCollapsed = !demo.transcriptCollapsed
@@ -153,17 +295,25 @@ ApplicationWindow {
         id: answerWindow
         objectName: "answerWindow"
         transientParent: null
-        title: qsTr("春风 · 回应建议")
+        title: demo.isDemo ? qsTr("春风 · 回应建议演示") : qsTr("春风 · 回应建议")
         flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool) | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         color: "transparent"
         width: Math.min(400, screen.width - 40)
-        height: answerPanel.implicitHeight
-        visible: demo.interviewActive
+        height: Math.min(answerPanel.implicitHeight, screen.height - 24)
+        visible: window.showsAnswerWindow && demo.interviewActive
         onClosing: function(close) { window.closeInterviewWindow(close) }
         AnswerPanel {
             id: answerPanel
+            objectName: "conversationAnswerPanel"
             anchors.fill: parent
-            question: demo.question; triggerKind: demo.triggerKind; answer: demo.answer; generating: demo.generating; pendingQuestion: demo.pendingQuestion; collapsed: demo.answerCollapsed
+            heading: demo.isDemo ? qsTr("回应建议（演示）") : qsTr("回应建议")
+            question: demo.isDemo ? demo.question : window.conversationAdvice?.question ?? ""
+            triggerKind: demo.isDemo ? demo.triggerKind : window.conversationAdvice?.triggerKind ?? ""
+            answer: demo.isDemo ? demo.answer : window.conversationAdvice?.answer ?? ""
+            generating: demo.isDemo ? demo.generating : window.conversationAdvice?.generating ?? false
+            pendingQuestion: demo.isDemo ? demo.pendingQuestion : ""
+            statusMessage: demo.isDemo ? "" : window.conversationAdvice?.statusMessage ?? ""
+            collapsed: demo.answerCollapsed
             onCollapseRequested: demo.answerCollapsed = !demo.answerCollapsed
             onDragRequested: answerWindow.startSystemMove()
         }

@@ -10,7 +10,7 @@ Dialog {
     modal: true
     padding: 20
     closePolicy: Popup.CloseOnEscape
-    title: qsTr("正在准备对话")
+    title: controller.isDemo ? qsTr("正在准备演示对话") : qsTr("准备实时转写")
     onRejected: controller.cancelChecks()
     background: Rectangle { radius: 10; color: Theme.background; border.color: Theme.border }
     header: Item {
@@ -20,14 +20,26 @@ Dialog {
     }
     contentItem: Column {
         spacing: 12
-        Text { text: qsTr("检查完成后，将自动进入悬浮辅助。"); font.pixelSize: 14; color: Theme.muted }
+        Text {
+            width: parent.width
+            visible: !root.controller.isDemo
+            objectName: "nativePreflightMessage"
+            text: root.controller.nativeCheckMessage
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            font.pixelSize: 14
+            color: root.controller.checkState === "failed" ? Theme.danger : Theme.text
+        }
+        Text { visible: root.controller.isDemo; text: qsTr("检查完成后，将自动进入悬浮辅助。"); font.pixelSize: 14; color: Theme.muted }
         ProgressBar {
+            visible: root.controller.isDemo
             width: parent.width; from: 0; to: 5; value: Math.min(root.controller.checkStep, 5)
             background: Rectangle { implicitHeight: 4; color: "#f4f4f5"; radius: 2 }
             contentItem: Item { implicitHeight: 4; Rectangle { width: parent.width * Math.min(root.controller.checkStep / 5, 1); height: 4; radius: 2; color: Theme.text; Behavior on width { NumberAnimation { duration: 180 } } } }
         }
         Repeater {
-            model: [qsTr("离线转写引擎"), qsTr("系统音频"), qsTr("麦克风"), qsTr("模型连接"), qsTr("背景资料")]
+            model: root.controller.isDemo
+                   ? [qsTr("离线转写引擎"), qsTr("系统音频"), qsTr("麦克风"), qsTr("模型连接"), qsTr("背景资料")] : []
             delegate: Item {
                 id: row
                 required property string modelData
@@ -51,14 +63,24 @@ Dialog {
             }
         }
         Text {
-            width: parent.width; visible: root.controller.checkState === "failed"
-            text: root.controller.startScenario === "engine" ? qsTr("引擎启动失败，请重试检查。") : qsTr("模型连接失败，请重试检查。")
+            width: parent.width; visible: root.controller.isDemo && root.controller.checkState === "failed"
+            text: root.controller.startScenario === "engine" ? qsTr("引擎启动失败，请重试检查。") : qsTr("演示模型检查失败，请重试。")
             color: Theme.danger; font.pixelSize: 12; wrapMode: Text.Wrap
         }
         Row {
             anchors.right: parent.right; spacing: 8
             AppButton { variant: "secondary"; text: qsTr("取消"); onClicked: root.controller.cancelChecks() }
-            AppButton { visible: root.controller.checkState === "failed"; text: qsTr("重试检查"); onClicked: root.controller.retryChecks() }
+            AppButton {
+                objectName: "loadConversationEngineButton"
+                visible: root.controller.checkState === "failed" && root.controller.canLoadConversationEngine
+                text: qsTr("前往加载模型")
+                onClicked: root.controller.openConversationEngineSettings()
+            }
+            AppButton {
+                visible: root.controller.checkState === "failed" && !root.controller.canLoadConversationEngine
+                text: qsTr("重试检查")
+                onClicked: root.controller.retryChecks()
+            }
         }
     }
 }

@@ -1,7 +1,14 @@
 #include "app_fonts.h"
+#include "app_settings.h"
 #include "audio_device_list.h"
 #include "audio_level_test.h"
+#include "background_analysis_controller.h"
+#include "background_controller.h"
 #include "chunfe_application.h"
+#include "conversation_advice_controller.h"
+#include "conversation_store.h"
+#include "model_connection_controller.h"
+#include "model_test_chat_controller.h"
 #include "offline_transcription_controller.h"
 #include "cf_log.h"
 
@@ -9,6 +16,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlExtensionPlugin>
 #include <QQuickStyle>
+#include <QSettings>
 #include <audio_pipline_manager.h>
 // Q_IMPORT_QML_PLUGIN(ChunfePlugin)
 
@@ -35,15 +43,37 @@ int main(int argc, char *argv[])
 
     if (!ChunfeFonts::initialize())
         return 1;
+
+    const QString configFilePath = AppSettings::configFilePath();
+    const QString dataDirectory = AppSettings::dataDirectory();
+    if (!configFilePath.isEmpty()) {
+        QSettings legacy;
+        QSettings config(configFilePath, QSettings::IniFormat);
+        if (!AppSettings::migrateLegacyPreferences(legacy, config))
+            qWarning("Could not finish migrating Chunfe user settings.");
+    }
+
     AudioPiplineManager audioManager;
     AudioDeviceList audioDevices(audioManager);
     AudioLevelTest audioLevelTest(audioManager);
-    OfflineTranscriptionController offlineTranscription(audioManager);
+    OfflineTranscriptionController offlineTranscription(audioManager, configFilePath);
+    ModelConnectionController modelConnection(configFilePath);
+    ConversationAdviceController conversationAdvice(configFilePath, modelConnection);
+    ModelTestChatController modelTestChat(modelConnection);
+    BackgroundController backgroundDocument(dataDirectory);
+    BackgroundAnalysisController backgroundAnalysis(configFilePath, backgroundDocument, modelConnection);
+    ConversationStore conversationStore(dataDirectory);
 
     QQmlApplicationEngine engine;
     engine.setInitialProperties({{QStringLiteral("audioDevices"), QVariant::fromValue(&audioDevices)},
                                  {QStringLiteral("audioLevelTest"), QVariant::fromValue(&audioLevelTest)},
-                                 {QStringLiteral("offlineTranscription"), QVariant::fromValue(&offlineTranscription)}});
+                                 {QStringLiteral("offlineTranscription"), QVariant::fromValue(&offlineTranscription)},
+                                 {QStringLiteral("modelConnection"), QVariant::fromValue(&modelConnection)},
+                                 {QStringLiteral("modelTestChat"), QVariant::fromValue(&modelTestChat)},
+                                 {QStringLiteral("conversationStore"), QVariant::fromValue(&conversationStore)},
+                                 {QStringLiteral("conversationAdvice"), QVariant::fromValue(&conversationAdvice)},
+                                 {QStringLiteral("backgroundDocument"), QVariant::fromValue(&backgroundDocument)},
+                                 {QStringLiteral("backgroundAnalysis"), QVariant::fromValue(&backgroundAnalysis)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("Chunfe", "Main");

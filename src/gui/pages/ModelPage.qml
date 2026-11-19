@@ -7,21 +7,39 @@ import Chunfe.Ui
 PageFrame {
     id: root
     required property var controller
+    property bool testChatAvailable: false
+    signal testChatRequested()
     maximumContentWidth: 640
     property bool keyVisible: false
+    readonly property bool configurationDirty: controller?.configurationDirty ?? false
+    readonly property string verificationStatus: controller?.verificationStatus ?? "unconfigured"
 
-    function connectionMessage(status: string): string {
-        if (status === "testing")
-            return qsTr("正在测试连接…");
-        if (status === "connected")
-            return qsTr("连接成功");
-        return qsTr("连接失败，请检查配置后重试。");
+    function saveChanges(): bool {
+        return !configurationDirty || controller.saveModel();
+    }
+
+    function verificationLabel(): string {
+        if (configurationDirty)
+            return qsTr("等待保存");
+        const restored = controller?.verificationRestored ?? false;
+        switch (verificationStatus) {
+        case "untested": return qsTr("待检测");
+        case "testing": return qsTr("检测中…");
+        case "passed": return restored ? qsTr("上次检测通过") : qsTr("API 连接正常");
+        case "failed": {
+            const message = controller.verificationMessage;
+            if (restored)
+                return message ? qsTr("上次检测失败。%1").arg(message) : qsTr("上次检测失败");
+            return message || qsTr("检测失败");
+        }
+        default: return qsTr("未配置 API Key");
+        }
     }
 
     PageHeader {
         Layout.fillWidth: true
         title: qsTr("模型连接")
-        subtitle: qsTr("配置模型接口，之后的对话会自动沿用。")
+        subtitle: qsTr("配置 DeepSeek API，并查看连接状态。")
     }
     FormCard {
         Layout.fillWidth: true
@@ -30,30 +48,41 @@ PageFrame {
         SettingRow {
             Layout.fillWidth: true
             label: qsTr("API 地址")
-            description: qsTr("填写服务商提供的基础地址，包含版本路径。")
             AppField {
-                id: endpoint
                 objectName: "endpointField"
                 Layout.fillWidth: true
-                text: root.controller.apiEndpoint
-                placeholderText: "https://api.example.com/v1"
+                text: root.controller ? root.controller.apiEndpoint : ""
+                readOnly: true
                 selectByMouse: true
                 Accessible.name: qsTr("API 地址")
             }
         }
         SettingRow {
+            id: keyRow
             Layout.fillWidth: true
             label: "API Key"
+            description: qsTr("结束编辑后自动保存到 chunfeng/config.ini，并检测新 Key。")
             AppField {
-                id: key
                 objectName: "apiKeyField"
+                property bool edited: false
                 Layout.fillWidth: true
                 rightPadding: 44
-                text: root.controller.apiKey
+                text: root.controller ? root.controller.draftApiKey : ""
+                enabled: root.controller !== null
                 placeholderText: qsTr("输入 API Key")
                 echoMode: root.keyVisible ? TextInput.Normal : TextInput.Password
+                inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
                 selectByMouse: true
                 Accessible.name: "API Key"
+                Accessible.description: keyRow.description
+                onTextEdited: {
+                    edited = true;
+                    root.controller.draftApiKey = text;
+                }
+                onEditingFinished: {
+                    if (edited && root.saveChanges())
+                        edited = false;
+                }
                 IconButton {
                     anchors.right: parent.right
                     anchors.rightMargin: 3
@@ -67,36 +96,32 @@ PageFrame {
         SettingRow {
             Layout.fillWidth: true
             label: qsTr("模型名称")
-            AppField {
-                id: model
+            SelectField {
                 objectName: "modelNameField"
                 Layout.fillWidth: true
-                text: root.controller.modelName
-                placeholderText: qsTr("例如：你的模型 ID")
-                selectByMouse: true
+                enabled: root.controller !== null
+                model: root.controller ? root.controller.availableModels : []
+                currentIndex: root.controller ? root.controller.availableModels.indexOf(root.controller.draftModelName) : -1
                 Accessible.name: qsTr("模型名称")
+                onActivated: index => {
+                    root.controller.draftModelName = textAt(index);
+                    root.saveChanges();
+                }
             }
         }
         SettingRow {
             Layout.fillWidth: true
-            visible: root.controller.connectionStatus !== "idle"
             label: qsTr("连接状态")
             minimumHeight: 24
             Label {
-                id: connectionResult
+                objectName: "modelVerificationStatus"
                 Layout.fillWidth: true
-                text: root.connectionMessage(root.controller.connectionStatus)
-                color: Theme.text
+                text: root.verificationLabel()
+                textFormat: Text.PlainText
                 wrapMode: Text.Wrap
                 font.pixelSize: 12
-            }
-            Connections {
-                target: root.controller
-                function onConnectionStatusChanged() {
-                    const status = root.controller.connectionStatus;
-                    if (status !== "idle" && status !== "testing")
-                        connectionResult.Accessible.announce(root.connectionMessage(status));
-                }
+                color: root.configurationDirty ? Theme.muted
+                    : root.verificationStatus === "failed" ? Theme.danger : Theme.text
             }
         }
         Rectangle {
@@ -113,14 +138,27 @@ PageFrame {
             AppButton {
                 objectName: "testConnectionButton"
                 variant: "secondary"
-                text: root.controller.connectionStatus === "testing" ? qsTr("正在测试…") : qsTr("测试连接")
-                enabled: root.controller.connectionStatus !== "testing" && endpoint.text.trim().length > 0 && model.text.trim().length > 0
-                onClicked: root.controller.testConnection(endpoint.text, key.text, model.text)
+                text: qsTr("测试连接")
+                focusPolicy: Qt.TabFocus
+                enabled: root.controller !== null && root.controller.draftApiKey.trim().length > 0
+                         && (root.verificationStatus !== "testing" || root.configurationDirty)
+                onClicked: {
+                    if (root.saveChanges() && root.verificationStatus !== "testing")
+                        root.controller.testConnection();
+                }
             }
             AppButton {
-                objectName: "saveModelButton"
-                text: qsTr("保存配置")
-                onClicked: root.controller.saveModel(endpoint.text, key.text, model.text)
+                objectName: "testChatButton"
+                variant: "secondary"
+                text: qsTr("测试对话")
+                focusPolicy: Qt.TabFocus
+                enabled: root.testChatAvailable && root.controller !== null
+                         && root.controller.draftApiKey.trim().length > 0
+                         && (root.controller.modelConfigured || root.configurationDirty)
+                onClicked: {
+                    if (root.saveChanges() && root.controller.modelConfigured)
+                        root.testChatRequested();
+                }
             }
         }
     }

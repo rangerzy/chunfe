@@ -76,12 +76,12 @@ TestCase {
         compare(demo.pendingQuestion, "");
     }
     function test_backgroundSnapshotAndSessionIsolation() {
-        demo.saveBackground("第一版背景");
+        demo.backgroundText = "第一版背景";
         demo.beginInterview();
         demo.finishInterview();
         const firstId = demo.selectedRecord.id;
         compare(demo.selectedRecord.backgroundText, "第一版背景");
-        demo.saveBackground("第二版背景");
+        demo.backgroundText = "第二版背景";
         demo.beginInterview();
         compare(demo.messages.length, 1);
         demo.finishInterview();
