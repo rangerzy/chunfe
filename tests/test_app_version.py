@@ -167,7 +167,9 @@ add_library(audio_pipline SHARED "${{CMAKE_CURRENT_SOURCE_DIR}}/audio.cpp")
 add_library(offline_transcription SHARED "${{CMAKE_CURRENT_SOURCE_DIR}}/audio.cpp")
 add_library(Qt6::QSvgPlugin MODULE IMPORTED)
 set_target_properties(Qt6::QSvgPlugin PROPERTIES IMPORTED_LOCATION "${{CMAKE_CURRENT_SOURCE_DIR}}/libqsvg.dylib")
-foreach(name Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network chunfe_fonts chunfe_guiplugin)
+add_library(Qt6::QSQLiteDriverPlugin MODULE IMPORTED)
+set_target_properties(Qt6::QSQLiteDriverPlugin PROPERTIES IMPORTED_LOCATION "${{CMAKE_CURRENT_SOURCE_DIR}}/libqsqlite.dylib")
+foreach(name Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network Qt6::Sql chunfe_fonts chunfe_guiplugin)
     add_library(${{name}} INTERFACE IMPORTED)
 endforeach()
 add_subdirectory("{ROOT / 'src/app'}" app)
@@ -210,7 +212,7 @@ add_library(chunfe_gui INTERFACE)
 set_property(TARGET chunfe_gui PROPERTY QT_QML_MODULE_QML_FILES "")
 add_library(audio_pipline SHARED "${{CMAKE_CURRENT_SOURCE_DIR}}/audio.cpp")
 add_library(offline_transcription SHARED "${{CMAKE_CURRENT_SOURCE_DIR}}/audio.cpp")
-foreach(name Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network chunfe_fonts chunfe_guiplugin)
+foreach(name Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network Qt6::Sql chunfe_fonts chunfe_guiplugin)
     add_library(${{name}} INTERFACE IMPORTED)
 endforeach()
 add_subdirectory("{ROOT / 'src/app'}" app)
@@ -247,8 +249,8 @@ class PackageVersionTests(unittest.TestCase):
         result = self.run_macos_package("2.3.4.5")
         self.assertEqual(result.returncode, 77, result.stderr)
 
-    def test_macos_requires_deployed_qt_configuration_and_svg_plugin(self):
-        for missing in (None, "qt.conf", "libqsvg.dylib"):
+    def test_macos_requires_deployed_qt_configuration_svg_and_sqlite_plugins(self):
+        for missing in (None, "qt.conf", "libqsvg.dylib", "libqsqlite.dylib"):
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "packaging/macos").mkdir(parents=True)
@@ -260,24 +262,27 @@ class PackageVersionTests(unittest.TestCase):
                 (root / "build/version.txt").write_text("2.3.4.5\n")
                 config = "" if missing == "qt.conf" else f'cp "{root}/src/app/qt-macos.conf" "$app/Contents/Resources/qt.conf"'
                 svg = "" if missing == "libqsvg.dylib" else 'touch "$app/Contents/PlugIns/imageformats/libqsvg.dylib"'
+                sqlite = "" if missing == "libqsqlite.dylib" else 'touch "$app/Contents/PlugIns/sqldrivers/libqsqlite.dylib"'
                 cmake = root / "bin/cmake"
                 cmake.write_text(f'''#!/bin/sh
 app="$4/Chunfe.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks/QtCore.framework" \\
     "$app/Contents/Frameworks/QtMultimedia.framework" "$app/Contents/PlugIns/platforms" \\
     "$app/Contents/PlugIns/multimedia" "$app/Contents/PlugIns/imageformats" \\
-    "$app/Contents/Resources/qml/QtQuick"
+    "$app/Contents/Resources/qml/QtQuick" "$app/Contents/Frameworks/QtSql.framework" "$app/Contents/PlugIns/sqldrivers"
 touch "$app/Contents/MacOS/Chunfe" "$app/Contents/PlugIns/platforms/libqcocoa.dylib" \\
     "$app/Contents/PlugIns/multimedia/backend.dylib" "$app/Contents/Resources/qml/QtQuick/qmldir"
+touch "$app/Contents/PlugIns/sqldrivers/libqsqlmimer.dylib"
 chmod +x "$app/Contents/MacOS/Chunfe"
 {config}
 {svg}
+{sqlite}
 ''')
                 lipo = root / "bin/lipo"
                 lipo.write_text("#!/bin/sh\nprintf 'arm64\\n'\n")
                 # Reaching the signing step proves the staged payload passed its checks.
                 xattr = root / "bin/xattr"
-                xattr.write_text("#!/bin/sh\nexit 77\n")
+                xattr.write_text('#!/bin/sh\ntest ! -f "$2/Contents/PlugIns/sqldrivers/libqsqlmimer.dylib" || exit 1\nexit 77\n')
                 for command in (cmake, lipo, xattr):
                     command.chmod(0o755)
                 result = subprocess.run(["bash", str(root / "packaging/macos/package.sh"), str(root / "build")],

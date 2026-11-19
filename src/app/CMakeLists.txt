@@ -1,10 +1,14 @@
-find_package(Qt6 6.12 REQUIRED COMPONENTS Multimedia Network)
+find_package(Qt6 6.12 REQUIRED COMPONENTS Multimedia Network Sql)
 set(chunfe_model_connection_sources
     deepseek_client.h deepseek_client.cpp
     deepseek_stream.h deepseek_stream.cpp
     model_connection_controller.h model_connection_controller.cpp)
 set(chunfe_app_settings_sources app_settings.h app_settings.cpp)
 set(chunfe_model_test_chat_sources model_test_chat_controller.h model_test_chat_controller.cpp)
+set(chunfe_conversation_store_sources conversation_store.h conversation_store.cpp)
+set(chunfe_conversation_advice_text_sources conversation_advice_text.h conversation_advice_text.cpp)
+set(chunfe_conversation_advice_sources conversation_advice_controller.h conversation_advice_controller.cpp
+    ${chunfe_conversation_advice_text_sources})
 set(chunfe_background_sources
     background_controller.h background_controller.cpp
     background_analysis_controller.h background_analysis_controller.cpp)
@@ -12,16 +16,36 @@ qt_add_executable(Chunfe
     main.cpp audio_device_list.h audio_device_list.cpp audio_level_test.h audio_level_test.cpp
     offline_transcription_controller.h offline_transcription_controller.cpp
     ${chunfe_model_connection_sources} ${chunfe_app_settings_sources} ${chunfe_background_sources}
-    ${chunfe_model_test_chat_sources})
+    ${chunfe_model_test_chat_sources} ${chunfe_conversation_store_sources} ${chunfe_conversation_advice_sources})
 cf_log_configure_target(Chunfe app)
 target_compile_features(Chunfe PRIVATE cxx_std_23)
 target_link_libraries(Chunfe PRIVATE
-    Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network
+    Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Network Qt6::Sql
     chunfe_fonts chunfe_gui chunfe_guiplugin audio_pipline offline_transcription
 )
 
 if(CHUNFE_BUILD_TESTS)
     find_package(Qt6 6.12 REQUIRED COMPONENTS Test)
+    qt_add_executable(conversation_store_tests tests/conversation_store_tests.cpp ${chunfe_conversation_store_sources})
+    target_compile_features(conversation_store_tests PRIVATE cxx_std_23)
+    target_include_directories(conversation_store_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(conversation_store_tests PRIVATE Qt6::Test Qt6::Sql Qt6::Qml)
+    add_test(NAME conversation_store_tests COMMAND conversation_store_tests)
+
+    qt_add_executable(conversation_advice_text_tests
+        tests/conversation_advice_text_tests.cpp ${chunfe_conversation_advice_text_sources})
+    target_compile_features(conversation_advice_text_tests PRIVATE cxx_std_23)
+    target_include_directories(conversation_advice_text_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(conversation_advice_text_tests PRIVATE Qt6::Test)
+    add_test(NAME conversation_advice_text_tests COMMAND conversation_advice_text_tests)
+
+    qt_add_executable(conversation_advice_controller_tests tests/conversation_advice_controller_tests.cpp
+        ${chunfe_conversation_advice_sources} ${chunfe_model_connection_sources} ${chunfe_app_settings_sources})
+    target_compile_features(conversation_advice_controller_tests PRIVATE cxx_std_23)
+    target_include_directories(conversation_advice_controller_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(conversation_advice_controller_tests PRIVATE Qt6::Test Qt6::Network)
+    add_test(NAME conversation_advice_controller_tests COMMAND conversation_advice_controller_tests)
+
     qt_add_executable(background_controller_tests tests/background_controller_tests.cpp
         ${chunfe_background_sources} ${chunfe_app_settings_sources} ${chunfe_model_connection_sources})
     target_compile_features(background_controller_tests PRIVATE cxx_std_23)
@@ -156,6 +180,9 @@ if(APPLE)
     if(NOT TARGET Qt6::QSvgPlugin)
         message(FATAL_ERROR "Qt SVG image format plugin is required for application icons")
     endif()
+    if(NOT TARGET Qt6::QSQLiteDriverPlugin)
+        message(FATAL_ERROR "Qt SQLite driver plugin is required for conversation history")
+    endif()
     set_target_properties(Chunfe PROPERTIES
         MACOSX_BUNDLE_ICON_FILE "chunfe-app.icns"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
@@ -173,16 +200,19 @@ if(APPLE)
     chunfe_install_offline_runtime("Chunfe.app/Contents/Frameworks"
         "Chunfe.app/Contents/Resources/licenses/audio.cpp"
         "Chunfe.app/Contents/Resources/offline-transcription")
-    # Install the SVG image plugin before macdeployqt, then let the deploy tool
-    # fix its Qt framework references as an additional binary.
+    # Install the drivers before macdeployqt so it can fix their framework references.
     install(PROGRAMS "$<TARGET_FILE:Qt6::QSvgPlugin>"
         DESTINATION "Chunfe.app/Contents/PlugIns/imageformats")
+    install(PROGRAMS "$<TARGET_FILE:Qt6::QSQLiteDriverPlugin>"
+        DESTINATION "Chunfe.app/Contents/PlugIns/sqldrivers")
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/qt-macos.conf"
         DESTINATION "Chunfe.app/Contents/Resources" RENAME qt.conf)
     qt_generate_deploy_qml_app_script(
         TARGET Chunfe
         OUTPUT_SCRIPT deploy_script
-        DEPLOY_TOOL_OPTIONS "-executable=Chunfe.app/Contents/PlugIns/imageformats/$<TARGET_FILE_NAME:Qt6::QSvgPlugin>"
+        DEPLOY_TOOL_OPTIONS
+            "-executable=Chunfe.app/Contents/PlugIns/imageformats/$<TARGET_FILE_NAME:Qt6::QSvgPlugin>"
+            "-executable=Chunfe.app/Contents/PlugIns/sqldrivers/$<TARGET_FILE_NAME:Qt6::QSQLiteDriverPlugin>"
         NO_UNSUPPORTED_PLATFORM_ERROR
     )
     install(SCRIPT ${deploy_script})

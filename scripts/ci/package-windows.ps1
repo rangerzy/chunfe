@@ -32,7 +32,7 @@ if (-not (Test-Path -LiteralPath $application -PathType Leaf)) {
 }
 
 # Scan the application sources, keeping independent examples out of deployment.
-windeployqt --release --compiler-runtime --include-plugins "qsvg,qsvgicon" --qmldir (Join-Path $sourceDir "src") $application
+windeployqt --release --compiler-runtime --include-plugins "qsvg,qsvgicon,qsqlite" --qmldir (Join-Path $sourceDir "src") $application
 @"
 [Paths]
 Prefix=.
@@ -40,8 +40,8 @@ Plugins=.
 QmlImports=qml
 "@ | Set-Content -LiteralPath (Join-Path $payloadDir "qt.conf") -Encoding utf8
 foreach ($required in @(
-    "Qt6Core.dll", "Qt6Gui.dll", "Qt6Qml.dll", "Qt6Quick.dll", "Qt6Multimedia.dll", "Qt6Svg.dll",
-    "imageformats/qsvg.dll", "iconengines/qsvgicon.dll",
+    "Qt6Core.dll", "Qt6Gui.dll", "Qt6Qml.dll", "Qt6Quick.dll", "Qt6Multimedia.dll", "Qt6Svg.dll", "Qt6Sql.dll",
+    "imageformats/qsvg.dll", "iconengines/qsvgicon.dll", "sqldrivers/qsqlite.dll",
     "platforms/qwindows.dll", "qml/QtQuick/qmldir",
     "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"
 )) {

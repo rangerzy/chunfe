@@ -40,13 +40,22 @@ app="$stage_dir/Chunfe.app"
 test -x "$app/Contents/MacOS/Chunfe"
 test "$(lipo -archs "$app/Contents/MacOS/Chunfe")" = arm64
 
+# Qt's deployment tool also copies unrelated SQL drivers with optional dependencies.
+for driver in "$app/Contents/PlugIns/sqldrivers/"*.dylib; do
+    if [[ -f "$driver" && "${driver##*/}" != libqsqlite.dylib ]]; then
+        rm -f -- "$driver"
+    fi
+done
+
 # CMake's Qt QML deployment script installs only scanned modules and invokes
 # macdeployqt for their runtime dependencies. A direct -qmldir deployment also
 # recursively copies unrelated modules nested below QtQuick.
 test -d "$app/Contents/Frameworks/QtCore.framework"
 test -d "$app/Contents/Frameworks/QtMultimedia.framework"
+test -d "$app/Contents/Frameworks/QtSql.framework"
 test -f "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
 test -f "$app/Contents/PlugIns/imageformats/libqsvg.dylib"
+test -f "$app/Contents/PlugIns/sqldrivers/libqsqlite.dylib"
 test -d "$app/Contents/PlugIns/multimedia"
 test -n "$(find "$app/Contents/PlugIns/multimedia" -type f -name '*.dylib' -print -quit)"
 test -f "$app/Contents/Resources/qml/QtQuick/qmldir"
@@ -85,8 +94,10 @@ test "$icon_file" = chunfe-app.icns
 cmp "$source_dir/resources/branding/chunfe-app.icns" "$test_dir/installed/Chunfe.app/Contents/Resources/$icon_file"
 test -d "$test_dir/installed/Chunfe.app/Contents/Frameworks/QtCore.framework"
 test -d "$test_dir/installed/Chunfe.app/Contents/Frameworks/QtMultimedia.framework"
+test -d "$test_dir/installed/Chunfe.app/Contents/Frameworks/QtSql.framework"
 test -f "$test_dir/installed/Chunfe.app/Contents/PlugIns/platforms/libqcocoa.dylib"
 test -f "$test_dir/installed/Chunfe.app/Contents/PlugIns/imageformats/libqsvg.dylib"
+test -f "$test_dir/installed/Chunfe.app/Contents/PlugIns/sqldrivers/libqsqlite.dylib"
 test -d "$test_dir/installed/Chunfe.app/Contents/PlugIns/multimedia"
 test -n "$(find "$test_dir/installed/Chunfe.app/Contents/PlugIns/multimedia" -type f -name '*.dylib' -print -quit)"
 test -f "$test_dir/installed/Chunfe.app/Contents/Resources/qml/QtQuick/qmldir"
