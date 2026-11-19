@@ -21,6 +21,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Install pinned CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: "4.3.6"
       - name: Test version and release automation
         run: python3 -B -m unittest discover -s tests -p 'test_*.py'
       - name: Create the version tag and start its release workflow

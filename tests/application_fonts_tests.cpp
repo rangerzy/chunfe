@@ -114,9 +114,12 @@ private slots:
             QCOMPARE(rawFont.familyName(), family);
             QCOMPARE(rawFont.styleName(), styleName);
             const QByteArray os2 = rawFont.fontTable("OS/2");
-            QVERIFY(os2.size() >= 6);
+            QVERIFY(os2.size() >= 64);
             QCOMPARE(int(qFromBigEndian<quint16>(os2.constData() + 4)), weight);
-            QCOMPARE(int(rawFont.style()), style);
+            // FreeType can retain the request's style enum for named faces.
+            // OS/2.fsSelection bit 0 describes the physical face's italic glyphs.
+            const auto selection = qFromBigEndian<quint16>(os2.constData() + 62);
+            QCOMPARE(bool(selection & 0x0001), style == QFont::StyleItalic);
             QVERIFY(!run.glyphIndexes().isEmpty());
             QVERIFY(!run.glyphIndexes().contains(0));
         }

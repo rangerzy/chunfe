@@ -5,7 +5,7 @@ import QtQuick.Controls.Basic
 import Chunfe.Ui
 import TextBlock
 
-Item {
+FloatingSurface {
     id: root
 
     property var messages: []
@@ -89,13 +89,10 @@ Item {
 
     ListModel { id: transcriptModel }
 
-    Rectangle {
+    Item {
         id: header
         width: parent.width
         height: root.headerHeight
-        radius: 8
-        color: "#18181b"
-        border.color: "#3f3f46"
 
         MouseArea {
             anchors.left: parent.left
@@ -105,25 +102,17 @@ Item {
             onPressed: root.dragRequested()
         }
 
-        Rectangle {
-            id: logo
-            x: 8
+        AppIcon {
+            id: headerIcon
+            x: 18
             anchors.verticalCenter: parent.verticalCenter
-            width: 46
-            height: 46
-            radius: 23
-            color: "#fafafa"
-            Image {
-                anchors.centerIn: parent
-                width: 36
-                height: 36
-                source: root.logoSource
-                fillMode: Image.PreserveAspectFit
-            }
+            name: "audio"
+            size: 24
+            color: Theme.floatingText
         }
 
         Column {
-            anchors.left: logo.right
+            anchors.left: headerIcon.right
             anchors.leftMargin: 12
             anchors.verticalCenter: parent.verticalCenter
             width: Math.max(60, tools.x - x - 12)
@@ -131,7 +120,7 @@ Item {
             Text {
                 width: parent.width
                 text: root.paused && !root.finishing ? qsTr("春风已暂停") : root.statusText
-                color: "#fafafa"
+                color: Theme.floatingText
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
@@ -140,7 +129,7 @@ Item {
                 width: parent.width
                 text: root.elapsedText + "  ·  " + (root.finishing ? qsTr("处理剩余音频")
                                                    : root.paused ? qsTr("暂停接收新内容") : qsTr("实时转写"))
-                color: "#d4d4d8"
+                color: Theme.floatingMuted
                 font.pixelSize: 12
                 elide: Text.ElideRight
             }
@@ -176,6 +165,14 @@ Item {
                 onClicked: root.finishRequested()
             }
         }
+
+        Rectangle {
+            anchors.bottom: parent.bottom
+            width: parent.width
+            height: 1
+            color: Theme.floatingDivider
+            visible: !root.collapsed
+        }
     }
 
     Item {
@@ -185,15 +182,14 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         visible: !root.collapsed
-        opacity: 1
 
         ListView {
             id: transcript
             objectName: "transcriptScroll"
             anchors.fill: parent
             anchors.bottomMargin: 0
-            anchors.leftMargin: 2
-            anchors.rightMargin: 2
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
             spacing: 8
             model: transcriptModel
             clip: true
@@ -229,13 +225,13 @@ Item {
                     width: line.channel ? 30 : 26
                     height: 26
                     radius: 13
-                    color: line.isMe ? "#3f3f46" : "#18181b"
-                    border.color: "#52525b"
+                    color: line.isMe ? Theme.floatingMicSurface : Theme.floatingSpkSurface
+                    border.color: Theme.floatingBorder
                     Text {
                         objectName: "liveTranscriptSource"
                         anchors.centerIn: parent
                         text: line.channel ? line.channel.toUpperCase() : line.isMe ? qsTr("我") : qsTr("对方")
-                        color: "#e4e4e7"
+                        color: Theme.floatingText
                         font.pixelSize: 12
                     }
                 }
@@ -248,33 +244,31 @@ Item {
                     maximumWidth: Math.max(80, line.width - 76)
                     padding: 10
                     font.pixelSize: 15
-                    textColor: "#fafafa"
+                    textColor: Theme.floatingText
                     content: ({
                             text: line.contentText + (line.incomplete ? qsTr("（未完成）") : ""),
                             ranges: []
                         })
                     background: Rectangle {
-                        color: line.isMe ? "#3f3f46" : "#18181b"
+                        color: line.isMe ? Theme.floatingMicSurface : Theme.floatingSpkSurface
                         radius: 10
-                        border.color: "#52525b"
+                        border.color: Theme.floatingBorder
                     }
                 }
             }
         }
 
-        Rectangle {
+        Item {
             anchors.horizontalCenter: parent.horizontalCenter
             y: 35
             width: Math.min(parent.width - 64, 280)
             height: 82
             visible: transcript.count === 0
-            color: "#18181b"
-            radius: 8
             Text {
                 anchors.fill: parent
                 anchors.margins: 16
                 text: qsTr("等待对话…")
-                color: "#d4d4d8"
+                color: Theme.floatingMuted
                 font.pixelSize: 12
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -294,13 +288,13 @@ Item {
             font.pixelSize: 12
             contentItem: Text {
                 text: latest.text
-                color: "#fafafa"
+                color: Theme.floatingText
                 font: latest.font
                 horizontalAlignment: Text.AlignHCenter
             }
             background: Rectangle {
-                color: latest.hovered ? "#3f3f46" : "#18181b"
-                border.color: latest.visualFocus ? "#fafafa" : "#52525b"
+                color: latest.hovered ? Theme.floatingControlHover : Theme.floatingControlSurface
+                border.color: latest.visualFocus ? Theme.floatingText : Theme.floatingBorder
                 radius: 6
             }
             onClicked: root.followLatest()

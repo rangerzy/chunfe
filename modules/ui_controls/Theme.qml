@@ -17,5 +17,17 @@ QtObject {
     readonly property color darkText: "#fafafa"
     readonly property color darkMuted: "#d4d4d8"
     readonly property color darkBorder: "#3f3f46"
+    readonly property color floatingNativeTint: "#38414957"
+    readonly property color floatingFallbackTint: "#cc414957"
+    readonly property color floatingText: "#ffffff"
+    readonly property color floatingMuted: "#f1f5f9"
+    readonly property color floatingBorder: "#30ffffff"
+    readonly property color floatingDivider: "#24ffffff"
+    readonly property color floatingMicSurface: "#0fffffff"
+    readonly property color floatingSpkSurface: "#14000000"
+    readonly property color floatingInsetSurface: "#16000000"
+    readonly property color floatingControlSurface: "#24000000"
+    readonly property color floatingControlHover: "#36000000"
+    readonly property real floatingRadius: 12
     readonly property real radius: 10
 }

@@ -8,12 +8,16 @@ qt_add_qml_module(ui_controls
     URI Chunfe.Ui
     VERSION 1.0
     STATIC
+    SOURCES
+        window_backdrop.h
+        window_backdrop.cpp
     QML_FILES
         Theme.qml
         ToolTipState.qml
         AppButton.qml
         IconButton.qml
         AppToolTip.qml
+        FloatingSurface.qml
         AppField.qml
         StatusBadge.qml
         PageHeader.qml
@@ -25,3 +29,8 @@ qt_add_qml_module(ui_controls
 )
 target_link_libraries(ui_controls PUBLIC
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2)
+
+if(APPLE)
+    target_sources(ui_controls PRIVATE window_backdrop_macos.mm)
+    target_link_libraries(ui_controls PRIVATE "-framework AppKit" "-framework QuartzCore")
+endif()

@@ -5,7 +5,7 @@ import QtQuick.Controls.Basic
 import Chunfe.Ui
 import TextBlock
 
-Rectangle {
+FloatingSurface {
     id: root
 
     property string heading: qsTr("回应建议")
@@ -24,9 +24,6 @@ Rectangle {
 
     implicitWidth: 400
     implicitHeight: collapsed ? headerHeight : 460
-    radius: 8
-    color: "#18181b"
-    border.color: "#3f3f46"
 
     onQuestionChanged: body.contentY = 0
 
@@ -48,13 +45,13 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             name: "bolt"
             size: 18
-            color: "#fafafa"
+            color: Theme.floatingText
         }
         Text {
             x: 45
             anchors.verticalCenter: parent.verticalCenter
             text: root.heading
-            color: "#fafafa"
+            color: Theme.floatingText
             font.pixelSize: 14
             font.weight: Font.DemiBold
         }
@@ -73,7 +70,7 @@ Rectangle {
             anchors.bottom: parent.bottom
             width: parent.width
             height: 1
-            color: "#3f3f46"
+            color: Theme.floatingDivider
             visible: !root.collapsed
         }
     }
@@ -96,7 +93,7 @@ Rectangle {
             height: root.pendingQuestion.length > 0 ? 62 : 0
             visible: root.pendingQuestion.length > 0
             radius: 6
-            color: "#27272a"
+            color: Theme.floatingInsetSurface
             Text {
                 id: pendingLabel
                 x: 10
@@ -105,7 +102,7 @@ Rectangle {
                 height: Math.max(0, parent.height - 18)
                 text: qsTr("正在准备新的回应建议…\n") + root.pendingQuestion
                 textFormat: Text.PlainText
-                color: "#d4d4d8"
+                color: Theme.floatingMuted
                 font.pixelSize: 12
                 wrapMode: Text.Wrap
                 maximumLineCount: 3
@@ -118,7 +115,7 @@ Rectangle {
             visible: root.generating
             text: qsTr("正在生成回应建议…")
             font.pixelSize: 12
-            color: "#d4d4d8"
+            color: Theme.floatingMuted
         }
         Text {
             width: parent.width
@@ -129,7 +126,7 @@ Rectangle {
             maximumLineCount: 3
             elide: Text.ElideRight
             font.pixelSize: 12
-            color: "#d4d4d8"
+            color: Theme.floatingMuted
         }
     }
 
@@ -161,7 +158,7 @@ Rectangle {
             Text {
                 visible: root.question.length > 0
                 text: qsTr("对应对话") + (root.triggerKind === "request" ? qsTr(" · 请求") : root.triggerKind === "objection" ? qsTr(" · 异议") : root.triggerKind === "question" ? qsTr(" · 问题") : "")
-                color: "#d4d4d8"
+                color: Theme.floatingMuted
                 font.pixelSize: 12
             }
             Text {
@@ -170,14 +167,14 @@ Rectangle {
                 visible: root.question.length > 0
                 text: root.question
                 textFormat: Text.PlainText
-                color: "#d4d4d8"
+                color: Theme.floatingMuted
                 font.pixelSize: 14
                 wrapMode: Text.Wrap
             }
             Rectangle {
                 width: parent.width
                 height: 1
-                color: "#3f3f46"
+                color: Theme.floatingDivider
                 visible: root.answer.length > 0
             }
             Repeater {
@@ -191,7 +188,7 @@ Rectangle {
                     maximumWidth: answerContent.width
                     font.pixelSize: index === 0 ? 16 : 15
                     font.weight: index === 0 ? Font.DemiBold : Font.Normal
-                    textColor: "#fafafa"
+                    textColor: Theme.floatingText
                     content: ({
                             text: paragraph.modelData,
                             ranges: []
@@ -207,7 +204,7 @@ Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     name: "bolt"
                     size: 28
-                    color: "#d4d4d8"
+                    color: Theme.floatingMuted
                 }
                 Text {
                     objectName: "answerEmptyState"
@@ -216,7 +213,7 @@ Rectangle {
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
-                    color: "#fafafa"
+                    color: Theme.floatingText
                     font.pixelSize: 16
                 }
             }
