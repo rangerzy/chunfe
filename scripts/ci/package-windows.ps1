@@ -8,9 +8,14 @@ Set-StrictMode -Version Latest
 
 $sourceDir = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $buildPath = (Resolve-Path (Join-Path $sourceDir $BuildDir)).Path
-$version = (Get-Content -LiteralPath (Join-Path $buildPath "version.txt") -Raw).Trim()
-if ($version -notmatch '^\d+\.\d+\.\d+$') {
+$version = (Get-Content -LiteralPath (Join-Path $buildPath "version.txt") -Raw).TrimEnd([char[]]"`r`n")
+if ($version -notmatch '\A(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}\z') {
     throw "Invalid application version: $version"
+}
+foreach ($part in $version.Split('.')) {
+    if ([int]$part -gt 65535) {
+        throw "Invalid application version: $version (each component must be at most 65535)"
+    }
 }
 
 $stageDir = Join-Path $buildPath "package"
@@ -27,7 +32,7 @@ if (-not (Test-Path -LiteralPath $application -PathType Leaf)) {
 }
 
 # Scan the application sources, keeping independent examples out of deployment.
-windeployqt --release --compiler-runtime --qmldir (Join-Path $sourceDir "src") $application
+windeployqt --release --compiler-runtime --include-plugins "qsvg,qsvgicon,qsqlite" --qmldir (Join-Path $sourceDir "src") $application
 @"
 [Paths]
 Prefix=.
@@ -35,13 +40,19 @@ Plugins=.
 QmlImports=qml
 "@ | Set-Content -LiteralPath (Join-Path $payloadDir "qt.conf") -Encoding utf8
 foreach ($required in @(
-    "Qt6Core.dll", "Qt6Gui.dll", "Qt6Qml.dll", "Qt6Quick.dll",
+    "Qt6Core.dll", "Qt6Gui.dll", "Qt6Qml.dll", "Qt6Quick.dll", "Qt6Multimedia.dll", "Qt6Svg.dll", "Qt6Sql.dll",
+    "imageformats/qsvg.dll", "iconengines/qsvgicon.dll", "sqldrivers/qsqlite.dll",
     "platforms/qwindows.dll", "qml/QtQuick/qmldir",
     "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"
 )) {
     if (-not (Test-Path -LiteralPath (Join-Path $payloadDir $required) -PathType Leaf)) {
         throw "Deployment is missing $required"
     }
+}
+$multimediaPlugins = Join-Path $payloadDir "multimedia"
+if (-not (Test-Path -LiteralPath $multimediaPlugins -PathType Container) -or
+    @(Get-ChildItem -LiteralPath $multimediaPlugins -Filter '*.dll' -File).Count -eq 0) {
+    throw "Deployment is missing a multimedia backend plugin"
 }
 
 $compiler = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6/ISCC.exe"

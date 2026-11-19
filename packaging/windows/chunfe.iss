@@ -24,6 +24,7 @@ OutputBaseFilename=chunfe-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\..\resources\branding\chunfe-app.ico
 UninstallDisplayIcon={app}\Chunfe.exe
 VersionInfoVersion={#AppVersion}
 

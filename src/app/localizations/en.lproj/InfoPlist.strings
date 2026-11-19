@@ -1,0 +1,4 @@
+"CFBundleName" = "Chunfe";
+"CFBundleDisplayName" = "Chunfe";
+"NSMicrophoneUsageDescription" = "Chunfe uses your microphone to hear you during audio tests and conversations.";
+"NSAudioCaptureUsageDescription" = "Chunfe captures system audio to hear the other person during audio tests and conversations.";

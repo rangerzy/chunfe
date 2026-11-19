@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/0xShug0/audio.cpp",
+  "commit": "047fb4243914583e23c41d37f28185f0ebfe1bba",
+  "abi": "0.3.0",
+  "compiler": "AppleClang 21.0.0.21000334",
+  "deployment_target": "14.4",
+  "cmake_options": [
+    "AUDIOCPP_BUILD_C_API=ON",
+    "AUDIOCPP_MODEL_SET=custom",
+    "AUDIOCPP_MODELS=qwen3_asr",
+    "AUDIOCPP_DEPLOYMENT_BUILD=ON",
+    "ENGINE_ENABLE_METAL=ON",
+    "GGML_METAL_EMBED_LIBRARY=ON",
+    "ENGINE_ENABLE_CUDA=OFF",
+    "ENGINE_ENABLE_VULKAN=OFF",
+    "ENGINE_ENABLE_NATIVE_CPU=OFF",
+    "ENGINE_ENABLE_OPENMP=OFF",
+    "GGML_OPENMP=OFF",
+    "ENGINE_ENABLE_LLAMAFILE=OFF",
+    "ENGINE_BUILD_TESTS=OFF"
+  ],
+  "path": "lib/macos/arm64/libaudiocpp.dylib",
+  "sha256": "1a5d84838b37cf845da47cce7e48fa9e70f47dc076b6f743e8f339bcd29b0fb4",
+  "size": 6531904,
+  "source_archive_sha256": "7fcbcb3188c2810c7082eb95b3c67a024304702cd06c32af020d5b87be7357fb",
+  "source_package": "viaim_universal_unity_qt612/plugin/OfflineTranscriptionManager"
+}

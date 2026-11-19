@@ -1,0 +1,71 @@
+name: CMake baseline
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: CMake ${{ matrix.cmake }} / Qt 6.12
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        cmake: ["4.3.6", "4.4.5"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_BACKEND: software
+      CMAKE_BUILD_PARALLEL_LEVEL: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install graphics dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgl1 libegl1 libxkbcommon0 libxcb-cursor0
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.4.1
+        with:
+          version: "6.12.0"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtmultimedia
+          cache: true
+      - name: Install selected CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: ${{ matrix.cmake }}
+      - name: Verify tools and release tests
+        env:
+          EXPECTED_CMAKE: ${{ matrix.cmake }}
+        run: |
+          test "$(cmake --version | head -n 1)" = "cmake version $EXPECTED_CMAKE"
+          cmake --version
+          test "$(qmake -query QT_VERSION)" = 6.12.0
+          python3 -B -m unittest discover -s tests -p 'test_*.py'
+      - name: Build and test application
+        run: |
+          cmake --preset relwithdebinfo -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" -DCHUNFE_BUILD_TESTS=ON
+          cmake --build --preset relwithdebinfo
+          ctest --test-dir build/relwithdebinfo --output-on-failure --no-tests=error
+      - name: Build and test standalone examples
+        run: |
+          for example in text_block_consumer calendar_consumer text_block_lab calendar_before_today; do
+            case "$example" in
+              text_block_consumer) test_options=(-DTEXT_BLOCK_BUILD_TESTS=ON) ;;
+              text_block_lab) test_options=(-DTEXT_BLOCK_BUILD_TESTS=ON -DTEXT_BLOCK_LAB_BUILD_TESTS=ON) ;;
+              calendar_consumer|calendar_before_today) test_options=(-DCALENDAR_BUILD_TESTS=ON) ;;
+            esac
+            cmake -S "examples/$example" -B "build/$example" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" "${test_options[@]}"
+            cmake --build "build/$example"
+            ctest --test-dir "build/$example" --output-on-failure --no-tests=error
+          done

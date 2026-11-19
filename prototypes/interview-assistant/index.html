@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>春风 · 对话辅助</title>
+  <link rel="icon" type="image/svg+xml" href="assets/chunfe-app.svg?v=20261103-10">
+  <link rel="stylesheet" href="styles.css?v=20261103-10">
+  <link rel="stylesheet" href="overlay.css?v=20261103-10">
+  <link rel="stylesheet" href="transcription-test.css?v=20261103-10">
+</head>
+<body>
+  <div class="app-window" id="app-window">
+    <aside class="sidebar">
+      <a href="#home" class="brand" aria-label="春风首页"><span class="brand-mark"><img src="assets/chunfe-mark-light.svg?v=20261103-10" alt="" aria-hidden="true"></span></a>
+      <nav id="navigation" aria-label="主导航"></nav>
+    </aside>
+    <div class="workspace"><main id="main-content" tabindex="-1"></main></div>
+  </div>
+  <div id="overlay-root" hidden></div>
+  <div id="modal-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
+  <script src="assets/iconpark.js?v=20261103-10"></script>
+  <script src="overlay.js?v=20261103-10"></script>
+  <script src="transcription-test.js?v=20261103-10"></script>
+  <script src="app.js?v=20261103-10"></script>
+</body>
+</html>

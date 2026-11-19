@@ -1,6 +1,6 @@
 # TextBlock consumer
 
-This standalone Qt 6.12 / CMake 3.24 project demonstrates using TextBlock in an application. The repository's root project does not build this example.
+This standalone Qt 6.12 / CMake 4.3.6+ project demonstrates using TextBlock in an application. The repository's root project and release workflow do not build this example; the separate check workflow builds it and runs available tests.
 
 From the repository root:
 
@@ -17,9 +17,10 @@ Use the Qt installation prefix for your platform. The executable is placed in `b
 ```sh
 cmake -S /path/to/text_block_consumer -B /path/to/consumer-build -G Ninja \
   -DCMAKE_PREFIX_PATH=/path/to/Qt/6.12/macos \
-  -DTEXT_BLOCK_SOURCE_DIR=/path/to/modules/text_block
+  -DTEXT_BLOCK_SOURCE_DIR=/path/to/modules/text_block \
+  -DCHUNFE_LOG_SOURCE_DIR=/path/to/modules/logging
 ```
 
-The repository's font bundle is included when available. Set `CHUNFE_FONTS_SOURCE_DIR` to another bundle path, or pass `-DCHUNFE_FONTS_SOURCE_DIR=` to use the system font. The copied example needs only Qt and the TextBlock sources when the font path is empty.
+The repository's font bundle is included when available. Set `CHUNFE_FONTS_SOURCE_DIR` to another bundle path, or pass `-DCHUNFE_FONTS_SOURCE_DIR=` to use the system font. The example requires Qt, TextBlock, and the logging module; `CHUNFE_LOG_SOURCE_DIR` specifies the logging sources. TextBlock itself does not depend on the logging module.
 
 Pass `-DTEXT_BLOCK_BUILD_TESTS=ON` to enable the module's tests, then build and run `ctest --test-dir build/text-block-consumer --output-on-failure`.

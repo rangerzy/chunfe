@@ -1,3 +1,5 @@
+#include "cf_log.h"
+
 #include <QCommandLineParser>
 #include <QGuiApplication>
 #include <QImage>
@@ -13,6 +15,7 @@ Q_IMPORT_QML_PLUGIN(TextBlockPlugin)
 
 int main(int argc, char *argv[])
 {
+    CfLog::initialize();
     // Match the experiment app's Qt 6.12 glyph antialiasing policy.
     // This belongs to the consumer, not the reusable module.
     if (!qEnvironmentVariableIsSet("QSG_DISTANCEFIELD_ANTIALIASING"))
@@ -51,7 +54,7 @@ int main(int argc, char *argv[])
         QTimer::singleShot(500, &app, [window, path] {
             const QImage image = window->grabWindow();
             if (image.isNull() || !image.save(path, "PNG")) {
-                qWarning("Could not save the example screenshot");
+                WARNING_CF_LOG() << "Could not save the example screenshot";
                 QCoreApplication::exit(1);
                 return;
             }

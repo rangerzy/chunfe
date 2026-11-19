@@ -1,1 +1,7 @@
+add_subdirectory(logging)
 add_subdirectory(text_block)
+add_subdirectory(calendar)
+add_subdirectory(ui_controls)
+add_subdirectory(interview_transcript)
+add_subdirectory(answer_panel)
+add_subdirectory(transcription_test)

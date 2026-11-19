@@ -1,11 +1,12 @@
 #include "app_fonts.h"
+#include "cf_log.h"
 
 #include <QFontDatabase>
+#include <QDir>
 #include <QFile>
 #include <QGuiApplication>
 #include <QResource>
 #include <QThread>
-#include <QDebug>
 
 #include <array>
 
@@ -22,7 +23,7 @@ bool initialize()
 {
     auto *application = qobject_cast<QGuiApplication *>(QCoreApplication::instance());
     if (!application || QThread::currentThread() != application->thread()) {
-        qCritical("ChunfeFonts::initialize requires QGuiApplication and its GUI thread");
+        ERROR_CF_LOG() << "ChunfeFonts::initialize requires QGuiApplication and its GUI thread";
         return false;
     }
 
@@ -36,47 +37,37 @@ bool initialize()
     }();
     Q_UNUSED(resourcesInitialized);
 
-    const std::array paths = {
-        QStringLiteral(":/fonts/oppo-sans/OPPO Sans 4.0.ttf"),
-        QStringLiteral(":/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"),
-        QStringLiteral(":/fonts/jetbrains-mono/JetBrainsMono-SemiBold.ttf"),
-        QStringLiteral(":/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf")
-    };
+    const QDir interDirectory(QStringLiteral(":/fonts/Inter-4.1/extras/ttf"));
+    const auto interFiles = interDirectory.entryList({QStringLiteral("*.ttf")},
+                                                   QDir::Files, QDir::Name);
+    if (interFiles.isEmpty()) {
+        ERROR_CF_LOG().noquote() << "No bundled Inter fonts found:" << interDirectory.path();
+        return false;
+    }
+    QStringList paths = {QStringLiteral(":/fonts/oppo-sans/OPPO Sans 4.0.ttf")};
+    for (const auto &file : interFiles)
+        paths.append(interDirectory.filePath(file));
+
     QList<int> registeredIds;
-    QString chineseFamily;
-    QString latinFamily;
     const auto rollback = [&registeredIds] {
         for (int id : registeredIds)
             QFontDatabase::removeApplicationFont(id);
     };
 
-    for (std::size_t index = 0; index < paths.size(); ++index) {
-        const auto &path = paths[index];
+    for (const auto &path : paths) {
         const int id = QFontDatabase::addApplicationFont(path);
         if (id < 0) {
-            qCritical().noquote() << "Could not register bundled font:" << path;
+            ERROR_CF_LOG().noquote() << "Could not register bundled font:" << path;
             rollback();
             return false;
         }
         registeredIds.append(id);
-        const auto families = QFontDatabase::applicationFontFamilies(id);
-        if (families.isEmpty()) {
-            qCritical().noquote() << "Bundled font has no usable family:" << path;
-            rollback();
-            return false;
-        }
-        if (index == 0)
-            chineseFamily = families.constFirst();
-        else if (index == 1)
-            latinFamily = families.constFirst();
-        else if (!families.contains(latinFamily)) {
-            qCritical().noquote() << "Bundled font does not match the Latin family:"
-                                 << path << "expected" << latinFamily;
-            rollback();
-            return false;
-        }
     }
 
+    // These family names belong to the bundled, unmodified font files.
+    // Inter Display is registered too, for consumers that explicitly select it.
+    const QString chineseFamily = QStringLiteral("OPPO Sans 4.0");
+    const QString latinFamily = QStringLiteral("Inter");
     // Keep the existing application size and features. Normal text uses weight
     // 400; titles and emphasis can still request the supplied heavier faces.
     QFont font = QGuiApplication::font();
@@ -98,20 +89,20 @@ QString licenseNotices()
     const std::array licenses = {
         License{QStringLiteral("OPPO Sans 4.0 — License Notice"),
                 QStringLiteral(":/fonts/oppo-sans/OPPO Sans 4.0 License Notice.txt")},
-        License{QStringLiteral("JetBrains Mono 2.304 — SIL Open Font License 1.1"),
-                QStringLiteral(":/fonts/jetbrains-mono/OFL.txt")}
+        License{QStringLiteral("Inter 4.1 — SIL Open Font License 1.1"),
+                QStringLiteral(":/fonts/Inter-4.1/LICENSE.txt")}
     };
     QStringList sections;
     for (const auto &license : licenses) {
         QFile file(license.path);
         if (!file.open(QIODevice::ReadOnly)) {
-            qCritical().noquote() << "Could not read bundled font license:"
+            ERROR_CF_LOG().noquote() << "Could not read bundled font license:"
                                  << license.path << file.errorString();
             return {};
         }
         const auto contents = file.readAll();
         if (file.error() != QFileDevice::NoError) {
-            qCritical().noquote() << "Could not read bundled font license:"
+            ERROR_CF_LOG().noquote() << "Could not read bundled font license:"
                                  << license.path << file.errorString();
             return {};
         }

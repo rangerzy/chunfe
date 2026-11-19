@@ -1,6 +1,6 @@
 # TextBlockLab
 
-TextBlockLab is a standalone Qt 6.12 / CMake 3.24 project for exploring TextBlock layout and interaction. The repository's root project does not build this example.
+TextBlockLab is a standalone Qt 6.12 / CMake 4.3.6+ project for exploring TextBlock layout and interaction. The repository's root project and release workflow do not build this example; the separate check workflow builds it and runs available tests.
 
 From the repository root:
 
@@ -12,7 +12,7 @@ cmake --build build/text-block-lab
 
 Use the Qt installation prefix for your platform. The executable is placed in `build/text-block-lab`.
 
-The example defaults to the repository's `modules/text_block` and `resources/fonts` directories. Override `TEXT_BLOCK_SOURCE_DIR` and `CHUNFE_FONTS_SOURCE_DIR` with absolute paths to build against another checkout or after copying the example elsewhere. The lab requires the font bundle.
+The example defaults to the repository's `modules/text_block`, `modules/logging`, and `resources/fonts` directories. Override `TEXT_BLOCK_SOURCE_DIR`, `CHUNFE_LOG_SOURCE_DIR`, and `CHUNFE_FONTS_SOURCE_DIR` with absolute paths to build against another checkout or after copying the example elsewhere. The lab requires the font bundle and logging module.
 
 Tests are opt-in and use the same independent build directory:
 

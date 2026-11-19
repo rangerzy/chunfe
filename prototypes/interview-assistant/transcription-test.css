@@ -1,0 +1,42 @@
+/* Compact, independent dual-channel transcription check. */
+.engine-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.transcription-test-modal { display: flex; flex-direction: column; width: 620px; height: 480px; overflow: hidden; }
+.transcription-test-modal h2 { flex: none; }
+.tt-panel { display: flex; flex: 1; min-height: 0; flex-direction: column; margin-top: 18px; }
+.tt-channels { display: flex; flex: none; flex-direction: column; gap: 14px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.tt-channel { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.tt-channel-icon { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 10px; background: var(--muted); color: var(--muted-foreground); }
+.tt-channel-icon svg { width: 18px; height: 18px; }
+.tt-device { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.tt-device strong { color: var(--foreground); font-size: 14px; font-weight: 600; line-height: 20px; }
+.tt-device strong span { font-weight: 500; }
+.tt-device-name { overflow: hidden; color: var(--muted-foreground); font-size: 12px; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
+.tt-channel[data-state="error"] .tt-channel-icon { color: var(--destructive); }
+.tt-level { flex: none; width: 160px; height: 6px; overflow: hidden; border-radius: 4px; background: var(--muted); }
+.tt-level > span { display: block; width: 0; height: 100%; border-radius: inherit; background: #52525b; transition: width .16s linear; }
+.tt-transcript-section { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; margin-top: 14px; }
+.tt-transcript-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none; margin-bottom: 8px; }
+.tt-transcript-heading strong { font-size: 14px; font-weight: 500; }
+.tt-running-state { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tt-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; padding: 0 5px 0 0; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #a1a1aa transparent; }
+.tt-scroll:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.tt-empty { padding: 42px 0; color: var(--muted-foreground); font-size: 14px; text-align: center; }
+.tt-lines { display: flex; flex-direction: column; gap: 12px; }
+.tt-line { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 12px; }
+.tt-line-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.tt-line-meta span { color: var(--foreground); font-size: 12px; font-weight: 600; line-height: 20px; }
+.tt-line-meta time { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; line-height: 18px; }
+.tt-line p { padding-top: 1px; color: var(--foreground); font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tt-line[data-final="false"] p { color: var(--muted-foreground); }
+.tt-latest { position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); box-shadow: 0 2px 8px rgb(0 0 0 / 8%); }
+.tt-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex: none; margin-top: 16px; }
+.tt-error { flex: 1; min-width: 0; color: var(--destructive); font-size: 12px; line-height: 18px; }
+@media (max-width: 580px) {
+  .engine-control { flex-wrap: wrap; }
+  .engine-actions { gap: 8px; }
+  .tt-channel { gap: 8px; }
+  .tt-level { width: clamp(64px, 20vw, 116px); }
+  .tt-device strong { font-size: 13px; }
+  .tt-line { grid-template-columns: 50px minmax(0,1fr); gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .tt-level > span { transition: none; } }

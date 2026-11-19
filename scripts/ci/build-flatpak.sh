@@ -16,20 +16,7 @@ for command in flatpak flatpak-builder python3 desktop-file-validate eu-strip eu
     }
 done
 
-version="$(python3 - <<'PY'
-import pathlib
-import re
-
-source = pathlib.Path("CMakeLists.txt").read_text(encoding="utf-8")
-match = re.search(
-    r"(?m)^\s*project\(\s*Chunfe\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)\s+LANGUAGES\s+CXX\s*\)",
-    source,
-)
-if not match:
-    raise SystemExit("Cannot read the project version from CMakeLists.txt")
-print(match.group(1))
-PY
-)"
+version="$(python3 scripts/ci/app_version.py)"
 
 app_id=io.github.rangerzy.chunfe
 runtime_branch=6.12-beta
@@ -54,6 +41,8 @@ if [[ ! "$qt_version" =~ ^6\.12\.[0-9]+$ ]]; then
     echo "Expected released Qt 6.12.x in the SDK; found: $qt_version" >&2
     exit 1
 fi
+echo "SDK-native CMake (the manifest provisions the build tool separately):"
+flatpak run --user --arch=x86_64 --command=cmake "org.kde.Sdk//$runtime_branch" --version
 echo "Building Chunfe $version with Qt $qt_version (KDE $runtime_branch)."
 
 desktop-file-validate "packaging/linux/$app_id.desktop"
@@ -62,7 +51,18 @@ flatpak-builder --user --arch=x86_64 --force-clean \
     --disable-rofiles-fuse --rebuild-on-sdk-change \
     --repo="$repo_dir" "$build_dir" "$manifest"
 
+# Verify the version produced by the same CMake configuration as the binary.
+if ! printf '%s\n' "$version" | cmp -s - "$build_dir/files/share/chunfe/version.txt"; then
+    echo "Built Flatpak version does not match declared version $version" >&2
+    exit 1
+fi
+
 test -x "$build_dir/files/bin/Chunfe"
+# The CMake module is build-only; its per-module cleanup must remove its tools.
+for tool in cmake ctest cpack ccmake cmake-gui; do
+    test ! -e "$build_dir/files/bin/$tool"
+done
+test ! -d "$build_dir/files/share/cmake-4.3"
 test -f "$build_dir/files/share/applications/$app_id.desktop"
 test -f "$build_dir/files/share/icons/hicolor/scalable/apps/$app_id.svg"
 flatpak build-bundle --arch=x86_64 --runtime-repo="$runtime_repo" \
@@ -102,6 +102,7 @@ if not binary.is_file() or not binary.stat().st_mode & 0o111:
     raise SystemExit("Installed Chunfe executable is missing or not executable")
 for relative in (
     "bin/Chunfe",
+    "share/chunfe/version.txt",
     f"share/applications/{app_id}.desktop",
     f"share/icons/hicolor/scalable/apps/{app_id}.svg",
 ):

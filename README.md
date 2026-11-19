@@ -4,23 +4,71 @@
 
 [GitHub 仓库](https://github.com/rangerzy/chunfe) · [构建与发布](https://github.com/rangerzy/chunfe/actions/workflows/build.yml) · [历史发布](https://github.com/rangerzy/chunfe/releases)
 
-春风是一个基于 **Qt Quick** 的桌面端 AI 面试辅助工具项目，帮助面试者理解面试官的问题、组织回答思路，并获得参考回答。
+春风是一个基于 **Qt Quick** 的桌面端 AI 实时对话辅助工具项目，帮助用户理解对方的问题、请求和异议，组织回应并参考建议。
 
 ## 当前阶段
 
-当前版本：`0.1.0`。根工程构建最小 **Chunfe 应用壳**：`src/app/main.cpp` 完成启动与字体初始化，`src/gui/Main.qml` 显示应用窗口。面试问题识别、AI 回答建议与面试上下文处理尚未实现。
+当前默认版本为 `0.1.0.0`。根工程提供 **Qt 6.12 原生桌面应用**，涵盖首页、背景资料、模型连接、音频与转写、对话记录与详情，以及「关于我们」页面。加载离线引擎后可开始正式对话。开始后主窗隐藏，置顶对话条实时转写，左侧为 SPK 系统声音，右侧为 MIC 麦克风。对话条可拖动、暂停和收起。
 
-`src/app`、`src/core`、`src/gui` 各自拥有 `CMakeLists.txt`，由 `src/CMakeLists.txt` 按 `core → gui → app` 引入，共享根工程的 `project(Chunfe)` 与配置。`app` 管理可执行目标、启动和安装部署；`gui` 管理静态 QML 模块 `chunfe_gui`（URI 为 `Chunfe`），可放置 QML 页面及其 C++ 适配代码；`core` 预留给应用业务逻辑，目前只有构建入口和职责说明，不创建空库或占位类。通用可复用组件继续放在 `modules/`。`examples/` 中的实验室和接入示例均为独立工程，根工程不包含示例，也不提供构建示例的开关；CI 不构建或测试示例。
+配置 DeepSeek 后，正式对话开始时会准备模型、API Key 和本次背景快照。对方（SPK）的定稿转写进入判断，常见寒暄和附和语会在本地跳过。需要判断的内容会连同背景和最近的双路转写发给 DeepSeek，对方确有问题、请求或异议时，建议会在「回应建议」悬浮窗流式显示。MIC 只补充上下文。
+
+正式对话的提示词位于 `chunfeng/config.ini` 的 `[conversationAdvice]` 节下。应用会自动补入缺少的 `prompt`，并在每场对话开始时重新读取。保留 `{{background}}` 和 `{{context}}`，发送请求时会分别填入本次背景快照，以及当前 SPK 发言和近期双路转写。可用 `\n` 换行。应用会附加流式输出格式。
+
+```ini
+[conversationAdvice]
+prompt="给出两句以内能直接说出口的回应，先说结论。信息不足时，先问一个具体的澄清问题。\n\n背景资料：\n{{background}}\n\n当前对话上下文：\n{{context}}"
+```
+
+结束正式对话时，应用等待离线转写收尾，然后将双路文字转写、回应建议和本次背景快照写入偏好目录下的 `chunfeng/conversations.sqlite`。macOS 路径为 `~/Library/Preferences/chunfeng/conversations.sqlite`。已开始显示的建议如果中途结束，会以未完成状态保存。重启后可在「对话记录」中查看以往对话，重命名和删除也会写回 SQLite。`prototypes/interview-assistant/` 保留网页交互演示。
+
+「背景资料」可导入一份 UTF-8 Markdown（`.md` 或 `.markdown`，最多 256 KiB），原文可选中复制。导入成功后将副本保存至 `chunfeng/background.md`，并在下次启动时自动载入。成功导入新文件会替换当前资料，取消或导入失败会保留当前资料。
+
+点击「AI 分析」会使用已保存的模型和 API Key，把当前 Markdown 原文发送给 DeepSeek。结果边生成边显示，可选中复制，也可停止生成。默认提示词要求只输出带编号的面试追问，最多 6 题，每题一行且不超过 60 字。
+
+`chunfeng/config.ini` 的 `[backgroundAnalysis]` 节下，`prompt` 是可编辑的分析提示词。应用会在每次分析时重读该项，并将 `{{background}}` 替换为当前 Markdown 原文。保留占位符才能发起分析。可用 `\n` 表示换行，删除 `prompt` 项会恢复默认提示词。
+
+```ini
+[backgroundAnalysis]
+prompt="根据下方资料，只输出带编号的面试追问。最多 6 题，每题一行且不超过 60 字。\n\n{{background}}"
+```
+
+「模型连接」使用 DeepSeek 官方 API。API Key 编辑结束或离开页面后自动保存，选择 `deepseek-flash`（默认）或 `deepseek-v4-pro` 后立即保存。首次保存或更换 API Key 后，应用会带上已保存的 Key 请求 `GET https://api.deepseek.com/models`，只读取模型列表。点击「测试连接」可刷新检测结果。最近一次完成的结果会自动保存，API 地址和 Key 相同时，重启后在模型连接页和首页显示上次结果。 [DeepSeek 获取模型列表](https://api-docs.deepseek.com/zh-cn/api/list-models/)
+
+保存 API Key 后，点击「测试对话」可用当前已保存的模型开启一段测试会话。底部输入消息，按 Enter 或点击发送按钮，上方实时显示模型回复。Shift+Enter 换行。连续追问会带上本次已完成的问答。关闭弹窗会结束这段测试会话。
+
+春风在系统的用户偏好目录下使用 `chunfeng` 作为数据目录。macOS 的配置文件为 `~/Library/Preferences/chunfeng/config.ini`，保存所选模型、API Key、最近一次完成的连接检测结果和上次成功加载的离线转写模型路径。API Key 以明文存储，输入框默认遮挡显示。清空 API Key 并离开输入框会移除 Key 和对应检测结果。首页的转写状态取决于引擎是否已经加载，背景状态取决于已保存的正文。
+
+新版启动时迁移这三项现有偏好，已有的 `config.ini` 值优先。确认 INI 保存成功后，应用清理旧位置中的对应配置项。背景文件和 SQLite 对话库也使用 `chunfeng` 目录。
+
+新增可复用模块：`modules/ui_controls`（`Chunfe.Ui`，Neutral 控件与主题）、`modules/interview_transcript`（`Chunfe.Transcript`，左右字幕胶囊）、`modules/answer_panel`（`Chunfe.Answer`，首次回应建议全文）。展示模块只接收属性、发出交互信号，字幕与建议复用 `TextBlock`。`src/gui/pages` 存放应用页面，`src/gui/shell` 存放导航与检查弹窗，`src/gui/mock` 管理独立的内存示例状态，`Main.qml` 负责三个窗口的生命周期。
+
+`src/app`、`src/core`、`src/gui` 各自拥有 `CMakeLists.txt`，由 `src/CMakeLists.txt` 按 `core → gui → app` 引入，共享根工程的 `project(Chunfe)` 与配置。`app` 管理可执行目标、启动和安装部署；`gui` 管理静态 QML 模块 `chunfe_gui`（URI 为 `Chunfe`），可放置 QML 页面及其 C++ 适配代码；`core` 预留给应用业务逻辑，目前只有构建入口和职责说明，不创建空库或占位类。通用可复用组件继续放在 `modules/`。`examples/` 中的实验室和接入示例均为独立工程，根工程不包含示例，也不提供构建示例的开关；正式发布工作流只构建主应用，独立检查工作流会构建示例并运行其可用测试。
 
 [`examples/text_block_lab`](examples/text_block_lab) 是 TextBlock 文本气泡实验室，用本地静态样本观察只读单段落气泡的自然宽度、换行、粗体与高亮、混合文字、流式更新和多个独立实例。以下实验说明仅适用于实验室。
 
 实验页面提供宽度调节、流式开始／暂停／重置、复制，以及 6／30／100 个实例切换。静态对照的 TextBlock 与原生 Qt Quick `Text` 使用相同纯文本、基础字体、有效最大宽度、背景色、圆角和内边距；原生 Text 显式使用 `QtRendering`。布局活动观察与性能测量分开运行。
 
+### 界面资源
+
+操作图标使用官方 IconPark `@icon-park/svg@1.4.2` 线性 SVG，离线内嵌，来源、许可证与重新生成方式见 [`modules/ui_controls/README.md`](modules/ui_controls/README.md)。已确认的品牌 Logo 独立保留。侧栏宽度固定 64px：激活项黑底白图标，悬停项浅灰底并覆盖展开文案。
+
+页面只显示功能性文案，mock 边界说明集中在本 README。浅色辅助文字采用 `#52525b`，常规文字14px、字幕/回答正文15px；浮窗文字不随暂停降低透明度。
+
+主窗默认 820 × 560，最小 760 × 520，可自由调整大小，切换页面保持窗口尺寸。首页采用居中的图标、标题、短开始按钮与三项横排状态入口；设置页使用 `SettingRow` 统一标签、控件及说明的对齐，通过间距和细分隔线分组。背景资料页保留独立的原文预览区和分析结果区，长内容可以滚动查看。
+
+「音频与转写」列出可用的麦克风和系统声音设备。「测试收音」使用选中的设备采集音频并显示实时电平，停止测试或离开页面时释放设备。各平台支持的音频来源见采集模块说明。[音频采集模块](plugins/AudioPipline/README.md)
+
+audio.cpp 动态库随应用打包并自动定位。在「离线转写」页输入或选择兼容的 Qwen3-ASR GGUF 模型文件，再点击「加载模型」。成功后应用会记住路径，每次启动时仍需手动加载。应用不会自动下载模型。旧版本保存的动态库路径不再使用。macOS 使用 Metal，Windows 使用 Vulkan；GPU 初始化失败时显示错误，不回退 CPU。加载后的引擎在关闭测试弹窗后保持就绪，退出应用或手动卸载时释放。各平台运行库的打包要求见[离线转写插件说明](plugins/OfflineTranscription/README.md)。
+
+「音频与转写」中的转写测试使用所选系统声音和麦克风实时识别，分别显示音量和逐句胶囊。离线转写用内置语音活动检测（VAD）判断各路说话何时结束。确认语音结束后，先识别尾音，再定稿该路胶囊。连续说话时按已确认的句末标点分句。停止测试会等待尾音，超时保留已有结果并标记未完成。重新测试会清空结果，关闭弹窗会结束测试。测试内容不写入对话记录，也不触发回应建议。实际延迟和识别效果取决于模型与设备。
+
 ### 应用字体
 
-中文使用 **OPPO Sans 4.0**，英文和 ASCII 数字使用 **JetBrains Mono 2.304**。正文使用 Regular（400），保留标题半粗体（600）和重点加粗（700）；Emoji 沿用平台字体回退。
+默认字体候选列表为 **Inter → OPPO Sans 4.0**，并将 OPPO 显式注册为 Han 脚本回退。英文和 ASCII 数字优先使用 **Inter 4.1**，中文使用 **OPPO Sans 4.0**。随应用内嵌 Inter 与 Inter Display 的全部 36 个静态 TTF：两个系列各包含 100–900 的九个字重及对应斜体。正文使用 Regular（400），标题和重点可继续请求半粗体（600）和粗体（700）；需要展示字体的组件可显式选择 `Inter Display`。Emoji 沿用平台字体回退。
 
-保留两套原版字体，按字形覆盖范围回退：`，。！？` 等常用中文标点使用 OPPO；JetBrains Mono 自带的 `｛｝`、智能引号、省略号等符号仍使用 JetBrains Mono，不额外改造字体。
+主应用沿用实验室的灰度抗锯齿设置 `QSG_DISTANCEFIELD_ANTIALIASING=gray`，统一新建和回收的 Qt Quick 字形节点；尊重外部环境设置，保持 QtRendering 与现有字体。该设置改善模式一致性，实际屏幕观感仍需结合平台和缩放比例判断。
+
+保留原始字体数据，按字形覆盖范围选择符号与标点的字体，不按全角／半角逐字符强制分配。Inter 未覆盖的字形继续回退；不修改或子集化字体。Inter 的变量字体、TTC、OTF 和 Web 格式保留为来源文件，不打包到应用。
 
 原始字体、许可证、版本来源和加载代码统一放在 [`resources/fonts/`](resources/fonts/README.md)，通过独立 `chunfe_fonts` target 内嵌到主应用及实验室，在 QML 创建前加载，无需用户安装字体或联网。界面控件、自绘 TextBlock、原生 Text 对照与性能测试使用同一套应用字体配置；系统绘制的窗口标题栏由操作系统控制。实验页面底部的“字体许可”可阅读两份原始许可证。`text_block` 模块本身不依赖这些字体，其他项目仍可通过 `font` 传入自己的配置。
 
@@ -81,12 +129,21 @@ TextBlock {
 
 完整实验室位于 [`examples/text_block_lab`](examples/text_block_lab)。它与接入示例 [`examples/text_block_consumer`](examples/text_block_consumer) 均单独配置和构建，接入命令与接口说明见 [`modules/text_block/README.md`](modules/text_block/README.md)。
 
+## Calendar 模块
+
+[`modules/calendar`](modules/calendar/README.md) 是从 `examples/calendar_before_today` 提取的静态 QML 模块，通过 `import Calendar` 使用 `PastDateCalendar`。支持起始年月到今天的日期选择、年月导航、液态选中动画、日期数据圆点及选择／月份变化通知，不依赖主应用或字体资源。
+
+独立接入示例 [`examples/calendar_consumer`](examples/calendar_consumer/README.md) 展示日历和所选日期，可单独配置、构建及运行；原 calendar 示例保留为原型参考。
+
 ## 开发环境
 
-- Qt **6.12+**，主应用与示例需要 Qt Quick 和 Qt Quick Controls；独立 `text_block` 模块只需要 Qt Quick 及其基础库。macOS / Windows CI 固定使用 `6.12.0`。
+- Qt **6.12+**，主应用需要 Qt Quick、Qt Quick Controls、Qt Multimedia、Qt SVG 和 Qt Network；示例需要 Qt Quick 和 Qt Quick Controls，独立 `text_block` 模块只需要 Qt Quick 及其基础库。macOS / Windows CI 固定使用 `6.12.0`。
 - 支持 **C++23** 的编译器。
-- CMake **3.24+**、Ninja。
+- CMake **4.3.6+**、Ninja。
 - macOS 使用 Apple Clang；Windows 使用 Qt 配套的 MinGW x64；Linux Flatpak 使用 KDE SDK 中的编译器。
+
+最低版本声明同时启用 CMake 4.3.6 及之前引入的 NEW 策略；不保留旧版本兼容分支。CI 固定使用 **4.3.6** 作为基线，并以 **4.4.5** 检查较新版本兼容性。
+Qt Creator 的 CMake 工具配置也需要选择 **4.3.6+**。字体资源通过 `BIG_RESOURCES` 直接生成对象文件，避免编译大型资源数组。
 
 通过 `CMAKE_PREFIX_PATH` 指定 Qt 安装路径，机器专属路径不提交到仓库。
 
@@ -123,21 +180,24 @@ cmake --build --preset linux-x64-release
 ./build/linux-x64-release/Chunfe
 ```
 
-主应用使用 Flatpak 打包。该配置在 KDE SDK 内构建，沿用 `jian` 的 **Flathub Beta `6.12-beta`** 运行时，允许 Qt 6.12 补丁更新；构建时会检查 SDK 的 Qt 版本。构建及安装步骤见 [Linux Flatpak 说明](packaging/linux/README.md)。
+主应用使用 Flatpak 打包。该配置在 KDE SDK 内构建，沿用 `jian` 的 **Flathub Beta `6.12-beta`** 运行时，允许 Qt 6.12 补丁更新；构建时会检查 SDK 的 Qt 版本，并在 SDK 内安装和使用固定的 CMake 4.3.6；宿主机 CMake 不参与沙盒构建，构建工具不会进入最终应用包。构建及安装步骤见 [Linux Flatpak 说明](packaging/linux/README.md)。
 
-### Debug 与检查
+### RelWithDebInfo 与检查
 
 ```sh
-cmake --preset debug \
+cmake --preset relwithdebinfo \
   -DCMAKE_PREFIX_PATH="/path/to/Qt/6.12.0/platform" \
   -DCHUNFE_BUILD_TESTS=ON
-cmake --build --preset debug
-cmake --build --preset debug --target chunfe_gui_qmllint text_block_qmllint
-ctest --test-dir build/debug --output-on-failure
+cmake --build --preset relwithdebinfo
+cmake --build --preset relwithdebinfo --target chunfe_gui_qmllint text_block_qmllint calendar_qmllint
+cmake --build --preset relwithdebinfo --target ui_controls_qmllint interview_transcript_qmllint answer_panel_qmllint
+ctest --test-dir build/relwithdebinfo --output-on-failure
 python3 -B -m unittest discover -s tests -v
 ```
 
-`CHUNFE_BUILD_TESTS=ON` 启用根应用的 `application_fonts_tests`；`TEXT_BLOCK_BUILD_TESTS` 首次配置时默认跟随该开关，也可显式覆盖。模块测试为 `text_block_tests` 和 `text_block_layout_tests`。Qt Test 使用 offscreen 平台与软件后端；字体测试检查实际字形使用的字体及字重，覆盖相邻中英文、数字、标点、粗体和 QML 控件继承。Python 测试覆盖 Release 发布逻辑，无需网络或 GitHub 凭据。
+`CHUNFE_BUILD_TESTS=ON` 启用根应用的 `application_fonts_tests` 与 `native_ui_tests`；`CHUNFE_LOG_BUILD_TESTS`、`TEXT_BLOCK_BUILD_TESTS` 与 `CALENDAR_BUILD_TESTS` 首次配置时默认跟随该开关，也可显式覆盖。模块测试为 `chunfe_log_tests`、`text_block_tests`、`text_block_layout_tests` 和 `calendar_tests`。Qt Test 使用 offscreen 平台与软件后端；字体测试检查实际字形使用的字体及字重，覆盖相邻中英文、数字、标点、粗体和 QML 控件继承。原生 UI 测试覆盖检查取消/失败重试、暂停、首答切换、背景快照、各页加载、悬浮窗关闭恢复及侧栏展开互斥。测试把布局绑定循环视为失败。Python 测试覆盖 Release 发布逻辑，无需网络或 GitHub 凭据。
+
+设置 `CHUNFE_TEST_ARTIFACT_DIR=/absolute/output/path` 后运行 `ctest --test-dir build/relwithdebinfo -R native_ui_tests`，可额外保存 Qt 实际渲染的页面和悬浮面板 PNG，默认测试不会生成截图。桌面置顶和拖动行为仍需在各目标平台上验证。
 
 实验室需单独配置；以下命令同时启用实验室与模块测试：
 
@@ -187,52 +247,87 @@ macOS 尚未配置开发者证书签名或 Apple 公证，Windows 尚未配置�
 
 ## 分支与自动发布
 
-日常在 **`dev`** 开发，合并到 **`main`** 后触发工作流。工作流检查 `src/app/main.cpp` 与 `src/gui/Main.qml` 同时存在后，执行主应用的三平台构建、打包和 Release。CI 不构建或测试 `examples/`；示例检查由开发者单独运行。
+日常在 **`dev`** 开发，准备发布时手动递增 `cmake/AppVersion.cmake` 中的
+`VERSION_MAJOR`、`VERSION_MINOR`、`VERSION_PATCH` 或 `VERSION_BUILD`。
+四段组成唯一公开版本 `APP_VERSION`，例如 `0.1.0.0 → 0.1.0.1`。
+每段使用无前导零的十进制整数，范围为 `0..65535`。
+根 `CMakeLists.txt` 引入这份定义，应用版本、标签和三个安装包文件名均使用完整四段版本。
+本地仍可用 CMake `-DVERSION_BUILD=...` 等参数覆盖版本；正式发布必须与提交中的版本及标签一致。
 
 ```sh
-git switch dev
-# 开发、验证、提交
+# 在 dev 修改代码和 cmake/AppVersion.cmake，然后验证、提交并推送
+python3 scripts/ci/app_version.py
+python3 -B -m unittest discover -s tests -p 'test_*.py'
 git push origin dev
-
-# 合并到 main；也可以通过 dev → main 的 Pull Request 合并
-git switch main
-git pull --ff-only origin main
-git merge --ff-only dev
-git push origin main
-git switch dev
+# 通过 dev → main 的 Pull Request 合并发布变更
 ```
 
-- 推送 `dev`、创建或更新 PR 均不会触发构建或发布。
-- 合并或推送到 `main`：先检查正式应用入口；两个入口文件均存在后，构建、打包 macOS / Windows / Linux，三端全部成功后发布 GitHub Release。
-- 也可在 GitHub Actions 中选择 `main` 手动运行，同样受入口检查限制；选择其他分支时所有任务跳过。
-- 工作流默认只有 `contents: read`，仅 Release 任务使用 `contents: write`，通过内置 `github.token` 发布，无需额外发布 Secret。
+合并或推送到 `main` 后，流程分两步：
 
-在 Actions 中确认运行标题包含 `push`、`main` 和本次提交 SHA；入口检查、三平台任务与发布任务均成功后，再确认 Release 标签指向该提交，并包含三个安装包。标题中的 `workflow_dispatch` 表示手动运行，只能验证构建与发布，不能作为推送自动触发成功的依据。当前文档不代表已完成三平台验证。
+1. `Prepare version release` 比较这次推送前后的声明版本。版本未变则结束；
+   版本变更且未被使用时，为该提交创建 `v<APP_VERSION>` 标签，例如 `v0.1.0.1`。
+   已有标签指向其他提交、版本倒退或 API 校验失败都会报错，不会强制移动标签。
+2. 标签创建后，用 GitHub 内置凭据显式调用 `Build and release`，运行目标为刚创建的标签。
+   工作流校验标签与源码版本一致、提交属于 `main` 历史、正式应用入口存在，
+   再构建 macOS ARM64 DMG、Windows x64 安装器和 Linux x64 Flatpak。
+   三平台全部通过后创建草稿 Release，上传并校验三个附件，最后公开发布。
 
-GitHub 远端为 `https://github.com/rangerzy/chunfe.git`，默认分支为 `main`。本地 `main`、`dev` 分别跟踪 `origin/main`、`origin/dev`。
+GitHub 内置 `GITHUB_TOKEN` 创建标签不会自动触发另一个 `push` 工作流，
+所以自动流程使用 `workflow_dispatch(ref=标签)`。这仍然是自动发布：无须点击 Run workflow，
+也无须额外配置 PAT、GitHub App 或 Secret。标签准备任务需要 `contents: write` 和
+`actions: write`；构建任务只有 `contents: read`；发布任务使用 `contents: write`。
+仓库或组织若限制这些权限，需要管理员允许相应内置凭据权限。
 
-版本唯一来源为 `CMakeLists.txt` 的 `project(Chunfe VERSION ...)`。Release 标签为 `v<版本>`，标题为 `Chunfe <版本>`。
+`Build and release` 同时支持人工推送 `v*` 标签和手动选择已有版本标签运行。
+手动选择分支运行会在入口校验失败；标签必须精确匹配四段声明版本且对应 `main` 历史中的提交。
+推送 `dev` 或更新 PR 不会触发正式构建/发布；独立检查工作流会使用固定的 CMake 4.3.6 和 4.4.5 构建根应用与 `examples/`，并运行可用测试。正式发布工作流仍只打包主应用。
 
-**同版本再次发布会更新同一个 Release、替换三平台附件，并将标签移动到最新成功发布的提交。** 需要保留独立版本记录时，先更新 CMake 中的版本号。
+**版本与标签发布后保持不变。** 发布脚本不会创建或移动标签，也不会更新已经公开的 Release、
+替换其附件或重新修改 Latest。新代码需要新版本。失败时可使用以下恢复方式：
 
-发布先进入草稿状态，三个附件上传并通过 SHA-256 校验后公开。发布说明记录提交及工作流信息，同版本旧提交的运行不会覆盖较新的发布，旧版本发布不会回退 Latest 标记，中断后可重跑恢复。
+- 自动打标签成功、启动构建失败：重跑 `Prepare version release`，它确认标签仍对应原提交后继续启动构建。
+- 构建或发布失败：在原运行中选择重跑失败的任务，沿用原标签和提交，不递增版本。
+- 草稿上传中断：重跑后保留校验通过的附件，只补充或替换草稿中的缺失/损坏附件。
+- 版本已经公开：再次执行发布会直接跳过，保持现有版本内容不变。
+
+发布说明记录四段版本、提交和工作流链接，不强制比较重写前的旧提交历史。
+旧 `v0.1.0` Release 与标签保留不变；首次合并这套配置时，旧三段 `0.1.0`
+可迁移为独立四段 `0.1.0.0`，生成新标签 `v0.1.0.0`。新版本按四个数值分段比较，
+较旧版本的重试不会把 Latest 从较新版本移回去。发布任务使用仓库统一队列串行执行，
+最多排队 100 个任务，防止多个版本同时修改 Latest；三平台构建仍可并行。
+
+在 Actions 中确认自动准备任务成功，再确认构建运行标题含 `workflow_dispatch`、版本标签和
+对应提交 SHA；三平台任务与发布任务都成功后，Release 应包含三个同版本安装包。
+这些配置和本地测试不代表已经完成远程三平台构建验证。
+
+macOS 的应用包短版本使用前三段，构建版本使用 `主.次.(补丁×65536+构建)`，
+以满足平台的一至三段元数据格式；公开标签、应用内版本和安装包文件名仍保持四段。
+Windows 安装器版本使用完整四段；Flatpak 的 `stable` 分支与应用版本相互独立。
+
+GitHub 远端为 `https://github.com/rangerzy/chunfe.git`，默认分支为 `main`。
+本地 `main`、`dev` 分别跟踪 `origin/main`、`origin/dev`。
 
 ## 工程结构
 
 ```text
-CMakeLists.txt             # 项目、版本、主应用、共享模块与测试开关
-CMakePresets.json          # 三平台 Release 与 Debug 构建预设
+CMakeLists.txt             # 项目、主应用、共享模块与测试开关
+cmake/AppVersion.cmake     # 手动维护的四段版本唯一来源
+CMakePresets.json          # 三平台 Release 与 RelWithDebInfo 构建预设
 src/CMakeLists.txt        # 统一引入 core、gui、app 三个内部子目录
 src/app/                  # 独立 CMake 管理 Chunfe 目标、启动、组装与安装部署
 src/gui/                  # 独立 CMake 管理 chunfe_gui 静态 QML 模块及界面适配
 src/core/                 # 业务层构建入口及职责说明，实际源码加入后再建库
+modules/logging/          # 基于 Qt 的共享日志宏、分类和输出格式
 modules/text_block/       # 可复用静态 QML 模块与模块 Qt Test
+modules/calendar/         # 可复用日历模块与日期交互、液滴动画测试
 resources/fonts/          # 原始字体、许可证及共享字体加载
 examples/text_block_lab/  # 独立实验室与自身测试
 examples/text_block_consumer/ # 独立接入示例
+examples/calendar_before_today/ # 原日历原型
+examples/calendar_consumer/ # Calendar 模块独立接入示例
 packaging/                # 主应用 DMG、Inno Setup、Flatpak 配置
 scripts/ci/               # Windows / Linux 打包脚本
-.github/workflows/        # main 分支主应用构建与发布，不构建示例
+.github/workflows/        # main 检测版本并打标签，按标签构建与发布
 .github/scripts/          # Release 发布脚本
 tests/                    # 根应用字体 Qt Test 与 Release 离线测试
 ```

@@ -4,11 +4,20 @@ set -euo pipefail
 source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_dir="${1:-$source_dir/build/macos-arm64-release}"
 build_dir="$(cd "$build_dir" && pwd)"
-version="$(tr -d '\r\n' < "$build_dir/version.txt")"
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+version="$(cat "$build_dir/version.txt")"
+version="${version%$'\r'}"
+component='(0|[1-9][0-9]{0,4})'
+if [[ ! "$version" =~ ^$component\.$component\.$component\.$component$ ]]; then
     echo "Invalid application version: $version" >&2
     exit 1
 fi
+IFS=. read -r -a version_parts <<< "$version"
+for part in "${version_parts[@]}"; do
+    if (( part > 65535 )); then
+        echo "Invalid application version: $version (each component must be at most 65535)" >&2
+        exit 1
+    fi
+done
 
 # Stage outside the checkout: synced Documents folders can reattach Finder
 # metadata while codesign is sealing an application bundle.
@@ -31,12 +40,26 @@ app="$stage_dir/Chunfe.app"
 test -x "$app/Contents/MacOS/Chunfe"
 test "$(lipo -archs "$app/Contents/MacOS/Chunfe")" = arm64
 
+# Qt's deployment tool also copies unrelated SQL drivers with optional dependencies.
+for driver in "$app/Contents/PlugIns/sqldrivers/"*.dylib; do
+    if [[ -f "$driver" && "${driver##*/}" != libqsqlite.dylib ]]; then
+        rm -f -- "$driver"
+    fi
+done
+
 # CMake's Qt QML deployment script installs only scanned modules and invokes
 # macdeployqt for their runtime dependencies. A direct -qmldir deployment also
 # recursively copies unrelated modules nested below QtQuick.
 test -d "$app/Contents/Frameworks/QtCore.framework"
+test -d "$app/Contents/Frameworks/QtMultimedia.framework"
+test -d "$app/Contents/Frameworks/QtSql.framework"
 test -f "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
+test -f "$app/Contents/PlugIns/imageformats/libqsvg.dylib"
+test -f "$app/Contents/PlugIns/sqldrivers/libqsqlite.dylib"
+test -d "$app/Contents/PlugIns/multimedia"
+test -n "$(find "$app/Contents/PlugIns/multimedia" -type f -name '*.dylib' -print -quit)"
 test -f "$app/Contents/Resources/qml/QtQuick/qmldir"
+cmp -s "$source_dir/src/app/qt-macos.conf" "$app/Contents/Resources/qt.conf"
 
 # Framework copies can carry Finder metadata, which codesign rejects. Clean the
 # staged bundle only, then sign its nested code before signing the app itself.
@@ -66,7 +89,17 @@ codesign --verify --deep --strict "$test_dir/installed/Chunfe.app"
 # Validate the copied application and its deployed runtime without changing the
 # application entry point. Automated startup testing is not configured yet.
 test -x "$test_dir/installed/Chunfe.app/Contents/MacOS/Chunfe"
+icon_file="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$test_dir/installed/Chunfe.app/Contents/Info.plist")"
+test "$icon_file" = chunfe-app.icns
+cmp "$source_dir/resources/branding/chunfe-app.icns" "$test_dir/installed/Chunfe.app/Contents/Resources/$icon_file"
 test -d "$test_dir/installed/Chunfe.app/Contents/Frameworks/QtCore.framework"
+test -d "$test_dir/installed/Chunfe.app/Contents/Frameworks/QtMultimedia.framework"
+test -d "$test_dir/installed/Chunfe.app/Contents/Frameworks/QtSql.framework"
 test -f "$test_dir/installed/Chunfe.app/Contents/PlugIns/platforms/libqcocoa.dylib"
+test -f "$test_dir/installed/Chunfe.app/Contents/PlugIns/imageformats/libqsvg.dylib"
+test -f "$test_dir/installed/Chunfe.app/Contents/PlugIns/sqldrivers/libqsqlite.dylib"
+test -d "$test_dir/installed/Chunfe.app/Contents/PlugIns/multimedia"
+test -n "$(find "$test_dir/installed/Chunfe.app/Contents/PlugIns/multimedia" -type f -name '*.dylib' -print -quit)"
 test -f "$test_dir/installed/Chunfe.app/Contents/Resources/qml/QtQuick/qmldir"
+cmp -s "$source_dir/src/app/qt-macos.conf" "$test_dir/installed/Chunfe.app/Contents/Resources/qt.conf"
 echo "Verified disk image and deployed files: $dmg"

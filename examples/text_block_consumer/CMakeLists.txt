@@ -1,9 +1,19 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 4.3.6)
 
 project(TextBlockConsumer LANGUAGES CXX)
 
 find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
 qt_standard_project_setup(REQUIRES 6.12)
+if(NOT TARGET chunfe_log)
+    get_filename_component(_default_log_source
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../modules/logging" ABSOLUTE)
+    set(CHUNFE_LOG_SOURCE_DIR "${_default_log_source}" CACHE PATH
+        "Path to the Chunfe logging module source directory")
+    if(NOT EXISTS "${CHUNFE_LOG_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "Set CHUNFE_LOG_SOURCE_DIR to the path of modules/logging")
+    endif()
+    add_subdirectory("${CHUNFE_LOG_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/logging")
+endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/ChunfeQmlTooling.cmake" OPTIONAL)
 if(COMMAND chunfe_setup_qml_tooling)
     chunfe_setup_qml_tooling()
@@ -28,7 +38,7 @@ endif()
 add_subdirectory("${TEXT_BLOCK_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/text_block")
 
 # The repository example shares its font bundle when available. A consumer
-# copied elsewhere still needs only TextBlock and Qt; an empty path opts out.
+# copied elsewhere also needs the logging module; an empty path opts out of fonts.
 set(_default_fonts_source "")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../resources/fonts/CMakeLists.txt")
     get_filename_component(_default_fonts_source
@@ -44,6 +54,7 @@ if(CHUNFE_FONTS_SOURCE_DIR)
 endif()
 
 qt_add_executable(text_block_consumer main.cpp)
+cf_log_configure_target(text_block_consumer text_block_consumer)
 qt_add_qml_module(text_block_consumer
     URI TextBlockConsumer
     VERSION 1.0

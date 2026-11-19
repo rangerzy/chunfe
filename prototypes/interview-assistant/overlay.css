@@ -1,0 +1,64 @@
+/* Transparent host for the two movable interview panels. */
+#overlay-root { position: fixed; inset: 0; z-index: 80; background: transparent; }
+.cf-scene { position: relative; width: 100%; height: 100dvh; overflow: hidden; color: #fafafa; background: transparent; }
+.cf-scene *, .cf-scene *::before, .cf-scene *::after { box-sizing: border-box; }
+.cf-scene button { font: inherit; }
+.cf-scene svg { display: block; width: 18px; height: 18px; flex: none; }
+.cf-scene button:focus-visible, .cf-caption-scroll:focus-visible, .cf-answer-body:focus-visible { outline: 2px solid #a1a1aa; outline-offset: 3px; }
+.cf-scene ::selection { background: #52525b; color: #fafafa; }
+.cf-floating-group { position: absolute; width: min(480px, calc((100vw - 48px) * .54)); }
+.cf-float-toolbar, .cf-answer-card { background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; }
+.cf-float-toolbar { display: flex; align-items: center; height: 64px; padding: 8px; gap: 12px; cursor: grab; touch-action: none; }
+.cf-dragging [data-drag] { cursor: grabbing; }
+.cf-float-ball { display: grid; place-items: center; flex: none; width: 46px; height: 46px; padding: 5px; border: 0; border-radius: 50%; background: #fafafa; }
+.cf-float-ball img { width: 36px; height: 36px; display: block; }
+.cf-float-meta { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.cf-float-meta strong { display: block; font-size: 14px; font-weight: 600; line-height: 20px; color: #fafafa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-float-meta > span { font-size: 12px; line-height: 18px; color: #d4d4d8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-window-tools { display: flex; align-items: center; flex: none; gap: 2px; }
+.cf-icon-button { display: grid; place-items: center; width: 32px; height: 32px; flex: none; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #fafafa; }
+.cf-icon-button:hover { background: #3f3f46; }
+.cf-icon-button:active { background: #52525b; }
+.cf-caption-wrap { position: relative; margin-top: 12px; }
+.cf-caption-scroll { height: min(292px, calc(100dvh - 112px)); padding: 2px 5px 2px 2px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #71717a transparent; }
+.cf-caption-line { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.cf-caption-me { flex-direction: row-reverse; }
+.cf-speaker-mark { display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; margin-top: 3px; border: 1px solid #52525b; border-radius: 50%; font-size: 12px; line-height: 24px; color: #e4e4e7; background: #18181b; }
+.cf-caption-bubble { max-width: calc(100% - 76px); padding: 9px 10px; border: 1px solid #52525b; border-radius: 12px; color: #fafafa; background: #18181b; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.cf-caption-me .cf-caption-bubble, .cf-caption-me .cf-speaker-mark { background: #3f3f46; }
+.cf-latest-button { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid #52525b; border-radius: 8px; background: #18181b; color: #fafafa; font-size: 12px !important; white-space: nowrap; }
+.cf-latest-button:hover { background: #3f3f46; }
+.cf-latest-button svg { width: 14px; height: 14px; }
+.cf-floating-group.cf-is-collapsed .cf-caption-wrap { display: none; }
+.cf-answer-card { position: absolute; display: flex; flex-direction: column; width: min(400px, calc((100vw - 48px) * .46)); height: min(460px, calc(100dvh - 32px)); overflow: hidden; }
+.cf-answer-heading { display: flex; justify-content: space-between; align-items: center; flex: 0 0 54px; min-height: 54px; padding: 0 12px 0 18px; border-bottom: 1px solid #3f3f46; cursor: grab; touch-action: none; }
+.cf-answer-title { display: flex; align-items: center; gap: 9px; font-size: 14px; color: #fafafa; }
+.cf-answer-title strong { font-weight: 600; }
+.cf-answer-content { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 12px 12px 14px 18px; }
+.cf-answer-status { flex: none; padding-right: 6px; }
+.cf-pending-question { padding: 9px 10px; margin-bottom: 10px; border-radius: 8px; background: #27272a; font-size: 12px; line-height: 20px; color: #d4d4d8; }
+.cf-pending-question span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.cf-generating { margin-bottom: 10px; color: #d4d4d8; font-size: 12px; line-height: 20px; }
+.cf-answer-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; scrollbar-width: thin; scrollbar-color: #71717a transparent; overscroll-behavior: contain; }
+.cf-matched-question { padding: 0 0 14px; margin-bottom: 14px; border-bottom: 1px solid #3f3f46; }
+.cf-matched-question span { display: block; margin-bottom: 10px; color: #d4d4d8; font-size: 12px; line-height: 18px; }
+.cf-matched-question p { margin: 0; color: #d4d4d8; font-size: 14px; line-height: 1.6; }
+.cf-answer-text { white-space: pre-wrap; overflow-wrap: anywhere; color: #fafafa; font-size: 15px; line-height: 1.65; }
+.cf-streaming::after { content: ''; display: inline-block; width: 2px; height: 1em; margin-left: 3px; vertical-align: -2px; background: #d4d4d8; animation: cf-blink 1s steps(1) infinite; }
+.cf-is-paused .cf-streaming::after { animation-play-state: paused; }
+.cf-answer-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 42px 0; color: #fafafa; }
+.cf-answer-empty svg { width: 28px; height: 28px; color: #d4d4d8; }
+.cf-answer-empty strong { font-size: 16px; font-weight: 500; }
+.cf-answer-card.cf-is-collapsed { height: 54px; }
+.cf-answer-card.cf-is-collapsed .cf-answer-heading { border-bottom: 0; }
+.cf-answer-card.cf-is-collapsed .cf-answer-content { display: none; }
+@keyframes cf-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@media (max-width: 639px) {
+  .cf-scene { display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 16px; overflow-y: auto; }
+  .cf-floating-group, .cf-answer-card { position: relative; left: auto !important; top: auto !important; flex: none; width: 100%; max-width: 480px; }
+  .cf-float-toolbar, .cf-answer-heading { cursor: default; }
+  .cf-caption-scroll { height: 292px; }
+  .cf-answer-card { height: 460px; }
+  .cf-answer-card.cf-is-collapsed { height: 54px; }
+}
+@media (prefers-reduced-motion: reduce) { .cf-streaming::after { animation: none; } }
